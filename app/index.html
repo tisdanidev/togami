@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Togami</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%2315151a'/%3E%3Cpath d='M8.2 7.6 L11.2 7.6 L17.4 20.6 L13.9 20.6 Z' fill='%238ba5f0'/%3E%3Cpath d='M15.8 7.6 L12.8 7.6 L6.6 20.6 L10.1 20.6 Z' fill='%238ba5f0' opacity='.62'/%3E%3Cpath d='M9.2 3.4 H14.8 L13.9 7.8 H10.1 Z' fill='%23fbfbfa'/%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="app" id="app">
+  <header class="topbar">
+    <div class="topbar-in">
+      <a class="brand" href="#focus" data-nav="focus" aria-label="Togami, focus">
+        <svg class="mark" id="mark" viewBox="0 0 24 24" aria-hidden="true">
+          <path class="mark-a" d="M8.2 7.6 L11.2 7.6 L17.4 20.6 L13.9 20.6 Z" />
+          <path class="mark-b" d="M15.8 7.6 L12.8 7.6 L6.6 20.6 L10.1 20.6 Z" />
+          <path class="mark-knot" d="M9.2 3.4 H14.8 L13.9 7.8 H10.1 Z" />
+        </svg>
+        <span class="word">Togami</span>
+      </a>
+      <nav class="nav" aria-label="Sections">
+        <a href="#focus" data-nav="focus">Focus</a>
+        <a href="#blocklist" data-nav="blocklist">Blocklist</a>
+        <a href="#ledger" data-nav="ledger">Ledger</a>
+        <a href="#settings" data-nav="settings">Settings</a>
+      </nav>
+      <span class="status" id="status" role="status"></span>
+    </div>
+  </header>
+
+  <main class="page" id="view"></main>
+</div>
+
+<div class="overlay" id="overlay" hidden></div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<button class="bench-toggle" id="benchToggle" type="button" hidden>Test bench</button>
+<aside class="bench" id="bench" hidden aria-label="Test bench"></aside>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

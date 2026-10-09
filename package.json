@@ -1,0 +1,15 @@
+{
+  "name": "togami",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A focus timer and distraction blocker for students.",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/serve.mjs",
+    "test": "node --test test/*.test.js",
+    "build": "node scripts/build-artifact.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10"
+  }
+}
