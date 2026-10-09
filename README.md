@@ -4,7 +4,9 @@ A focus timer and distraction blocker for students. Pick a session type, say wha
 
 ## Features
 
-- **Session types.** Pomodoro-style plans you can edit: focus length, break, long break and number of blocks. Ships with Essay (50/10 ×3), Revision (25/5 ×4) and Deep work (90/20 ×2).
+- **Session types.** Pomodoro-style plans you can edit: focus length, break, long break and number of blocks. Ships with Essay (50/10 ×3), Revision (25/5 ×4) and Deep work (90/20 ×2), plus **Custom**, set with steppers right on the Focus page.
+- **Full-screen sessions.** A running session takes over the window: a red tint with just the timer and your intention during focus, a green tint with the time left and the music player during breaks, and a neutral tint while paused.
+- **Sidebar.** Notion-style navigation on the left with the status and a mini music player. Hide it with the button or Ctrl+\\.
 - **Blocking.** Apps and websites per session type, plus an always-allowed list. Windows, Settings, Task Manager and Togami are never blocked. Breaks are unblocked unless you turn on *Block during breaks*.
 - **Pausing.** Press Pause and blocking keeps running for 2 more minutes, then stops for up to 10 minutes. Only during focus time.
 - **Quitting.** Hold a button for 5 seconds, type a sentence, wait 60 seconds, then see the cost. You can back out at every step.

@@ -3,7 +3,7 @@
 import * as E from './engine.js';
 import * as store from './store.js';
 import * as clock from './clock.js';
-import { blocker, media, isNative } from './platform.js';
+import { blocker, media, appWindow, isNative } from './platform.js';
 import { voice, QUIT_PHRASE } from './voice.js';
 import { clock as fmtClock, fmtMin, fmtHours, fmtDate, fmtTime, esc } from './format.js';
 import { seedSamples, clearSamples, hasSamples } from './samples.js';
@@ -13,9 +13,12 @@ const QUIT_WAIT_MS = 60_000;
 
 const $ = (s, el = document) => el.querySelector(s);
 const view = $('#view');
+const shell = $('#shell');
+const zen = $('#zen');
 const overlayEl = $('#overlay');
 const benchToggle = $('#benchToggle');
 const bench = $('#bench');
+const narrowMq = matchMedia('(max-width: 720px)');
 
 // ---------- state ----------
 
@@ -31,6 +34,7 @@ let overlay = null; // { type, ... }
 let lastMode = '';
 let lastSeenWrite = 0;
 let nowPlaying = null;
+let mobileSidebar = false;
 
 function now() {
   return clock.now();
@@ -44,6 +48,7 @@ function commit() {
 // ---------- boot ----------
 
 applyTheme();
+applySidebar();
 {
   const ev = E.checkClosedGap(state, store.lastSeen(), Date.now(), now());
   if (ev.length) handle(ev, { closed: true });
@@ -54,8 +59,11 @@ render();
 setInterval(loop, 250);
 addEventListener('hashchange', () => {
   route = routeFromHash();
+  if (narrowMq.matches) mobileSidebar = false;
+  applySidebar();
   render();
 });
+narrowMq.addEventListener('change', applySidebar);
 
 function routeFromHash() {
   const r = location.hash.slice(1);
@@ -66,7 +74,7 @@ function loop() {
   const t = now();
   const ev = E.tick(state, t);
   if (ev.length) handle(ev);
-  if (focusMode(t) !== lastMode && route === 'focus') render();
+  if (mode(t) !== lastMode) render();
   if (Date.now() - lastSeenWrite > 2000) {
     lastSeenWrite = Date.now();
     store.markSeen(lastSeenWrite);
@@ -86,17 +94,12 @@ function handle(events, { closed = false } = {}) {
     switch (e.type) {
       case 'complete':
         overlay = { type: 'complete', entry: e.entry, pardon: false };
+        appWindow.setFullscreen(false);
         glint();
         break;
       case 'pardonEarned':
         if (overlay?.type === 'complete') overlay.pardon = true;
         else toast(v.pardonEarned, 'gold');
-        break;
-      case 'phase':
-        toast(e.kind === 'focus' ? 'Break over. Back to focus.' : e.kind === 'long' ? 'Long break. Step away from the screen.' : 'Break time. Blocks are off until it ends.');
-        break;
-      case 'paused':
-        toast('Paused. Blocking is off for up to 10 minutes.');
         break;
       case 'resumed':
         if (e.auto) toast('The pause ran out. Blocking is back on.');
@@ -105,27 +108,39 @@ function handle(events, { closed = false } = {}) {
         toast('Lockout over. Blocks are off.');
         break;
       case 'quit':
+        appWindow.setFullscreen(false);
         if (closed || e.entry.forced) toast(v.closedQuit, 'neg');
+        break;
+      case 'emergency':
+        appWindow.setFullscreen(false);
         break;
       case 'error':
         toast(e.message, 'neg');
         break;
     }
   }
-  if (overlay && overlay.type !== 'complete' && !state.session && ['quit', 'pausePrompt'].includes(overlay.type)) overlay = null;
+  if (overlay && overlay.type === 'quit' && !state.session) overlay = null;
   commit();
   render();
 }
 
 // ---------- rendering ----------
 
+/** A key that changes whenever the screen layout should change. */
+function mode(t) {
+  if (E.lockoutActive(state, t)) return 'lockout';
+  if (!state.session) return 'idle';
+  const v = E.sessionView(state, t);
+  return `run:${v.phaseIndex}:${v.pause}`;
+}
+
 function render() {
-  for (const a of document.querySelectorAll('.nav a')) {
+  for (const a of document.querySelectorAll('.sb-nav a')) {
     if (a.dataset.nav === route) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   }
   const t = now();
-  lastMode = focusMode(t);
+  lastMode = mode(t);
   view.className = 'page' + (route === 'ledger' || route === 'settings' ? ' wide' : '');
   if (route === 'focus') view.innerHTML = viewFocus(t);
   if (route === 'blocklist') view.innerHTML = viewBlocklist(t);
@@ -133,100 +148,67 @@ function render() {
   if (route === 'settings') view.innerHTML = viewSettings(t);
   const input = $('#intention');
   if (input) input.value = intentionDraft;
+  renderZen(t);
   fillNowPlaying();
   renderOverlay();
   renderBench();
   updateLive(t);
 }
 
-function focusMode(t) {
-  if (E.lockoutActive(state, t)) return 'lockout';
-  if (!state.session) return 'idle:' + state.profileId;
-  const v = E.sessionView(state, t);
-  return `run:${v.phaseIndex}:${v.pause}`;
-}
-
 function digits(str) {
   return [...str].map((c) => (c === ':' ? '<span class="cl">:</span>' : `<span class="dg">${c}</span>`)).join('');
-}
-
-function planStrip(plan, idx = -1) {
-  return `<div class="plan" aria-hidden="true">${plan
-    .map((p, i) => `<i class="${p.kind === 'focus' ? 'focus' : p.kind === 'long' ? 'long' : 'brk'}" style="flex-grow:${p.ms}"><b data-seg="${i}" style="--p:${i < idx ? 100 : 0}%"></b></i>`)
-    .join('')}</div>`;
 }
 
 function profileLabel(p) {
   return `${p.focusMin}/${p.breakMin} ×${p.cycles}`;
 }
 
-function npCard() {
-  return `<div class="np" id="np"></div>`;
-}
+// ----- focus page -----
 
 function viewFocus(t) {
-  const v = voice(state);
   if (E.lockoutActive(state, t)) return viewLockout(t);
-  if (state.session) return viewRunning(t);
+  if (state.session) return ''; // the full-screen view covers this
 
+  const v = voice(state);
   const p = E.getProfile(state);
   const plan = E.buildPlan(p, state.debtMs);
   const total = plan.reduce((a, x) => a + x.ms, 0);
   const cost = E.quitCost({ ...state, session: { plan, phaseIndex: 0, phaseStartedAt: t, phasePausedMs: 0 } }, t);
-  const today = new Date(t).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
-  const pardonTxt = state.pardons
-    ? `<b class="gold">${state.pardons} ${state.pardons === 1 ? 'pardon' : 'pardons'}</b>. Each one cancels the penalty for one quit.`
-    : `None yet. You earn one every ${E.RULES.pardonEvery} finished sessions (${state.completedTowardPardon} of ${E.RULES.pardonEvery}).`;
+  const parts = [`${p.cycles} × ${p.focusMin} min`];
+  if (p.cycles > 1) parts.push(`${p.breakMin} min breaks`);
+  if (p.longBreakMin && p.cycles > 1) parts.push(`${p.longBreakMin} min long break`);
+  parts.push(`${fmtMin(total)} total`);
   return `<section class="focus">
-    <div class="eyebrow">${esc(today)}</div>
     <div class="seg" role="group" aria-label="Session type">
-      ${state.profiles.map((x) => `<button type="button" data-act="profile" data-id="${x.id}" aria-pressed="${x.id === p.id}">${esc(x.name)}<small>${profileLabel(x)}</small></button>`).join('')}
+      ${state.profiles.map((x) => `<button type="button" data-act="profile" data-id="${x.id}" aria-pressed="${x.id === p.id}">${esc(x.name)}<small>${x.custom ? 'Your own' : profileLabel(x)}</small></button>`).join('')}
     </div>
     <p class="timer idle" aria-label="First focus block">${digits(fmtClock(plan[0].ms))}</p>
-    ${planStrip(plan)}
-    <div class="plan-legend"><span>${p.cycles} focus ${p.cycles === 1 ? 'block' : 'blocks'}</span><span>${fmtMin(total)} total</span></div>
-    ${state.debtMs ? `<div class="notice neg">You owe ${fmtMin(state.debtMs)} from a quit session. It's added to your first block.</div>` : ''}
+    ${p.custom ? customEditor(p) : ''}
+    <div class="summary">${parts.join(' · ')}</div>
+    ${state.debtMs ? `<div class="notice neg">${fmtMin(state.debtMs)} of debt from a quit session is added to your first block.</div>` : ''}
     <div class="field">
-      <label for="intention">${esc(v.idlePrompt)}</label>
-      <input class="input" id="intention" maxlength="120" autocomplete="off" placeholder="${esc(v.idlePlaceholder)}" />
+      <input class="input" id="intention" maxlength="120" autocomplete="off" placeholder="${esc(v.idlePrompt)}" aria-label="${esc(v.idlePrompt)}" />
     </div>
     <button class="btn primary big" type="button" data-act="start">${esc(v.start)}</button>
-    <div class="terms">
-      <div class="row"><span class="k">Blocks</span><span>${p.apps.length} apps and ${p.sites.length} sites. <a href="#blocklist">Edit</a></span></div>
-      <div class="row"><span class="k">Pausing</span><span>Blocking keeps running for <b>2 min</b> after you press Pause, then stops for up to 10 min.</span></div>
-      <div class="row"><span class="k">Quitting</span><span>Blocks stay on for <b class="neg">${fmtMin(cost.lockoutMs)}</b> (your ${ordinal(cost.quitNumber)} quit this week) and skipped focus time is added to your next session.</span></div>
-      <div class="row"><span class="k">Pardons</span><span>${pardonTxt}</span></div>
-    </div>
-    ${npCard()}
+    <p class="quiet-line">Blocks ${p.apps.length} apps and ${p.sites.length} sites. Quitting locks them for ${fmtMin(cost.lockoutMs)}. <a href="#settings">Rules</a></p>
   </section>`;
 }
 
-function viewRunning(t) {
-  const s = state.session;
-  const sv = E.sessionView(state, t);
-  const isFocus = sv.phase.kind === 'focus';
-  const label = isFocus ? 'Focus' : sv.phase.kind === 'long' ? 'Long break' : 'Break';
-  let pauseUI = '';
-  if (sv.pause === 'pending') {
-    pauseUI = `<div class="pause-box"><span>${esc(voice(state).pausePending)} <b class="num" data-live="pauseIn"></b>. Blocking stays on until then.</span><button class="btn quiet" type="button" data-act="cancelPause">Cancel</button></div>`;
-  } else if (sv.pause === 'paused') {
-    pauseUI = `<div class="pause-box"><span>${esc(voice(state).paused)} Resumes by itself in <b class="num" data-live="pauseOut"></b>.</span><button class="btn primary" type="button" data-act="resume">Resume</button></div>`;
-  }
-  const canPause = isFocus && sv.pause === 'none';
-  return `<section class="focus">
-    <div class="phase-label ${isFocus ? '' : 'brk'}"><span class="tag">${label}</span><span>Block ${sv.focusIndex} of ${sv.focusTotal}</span></div>
-    <p class="timer ${sv.pause === 'paused' ? 'paused' : ''}" data-live="timer" aria-live="off"></p>
-    <p class="intention-line ${s.intention ? '' : 'empty'}">${s.intention ? `“${esc(s.intention)}”` : 'No intention set'}</p>
-    ${planStrip(s.plan, sv.phaseIndex)}
-    <div class="plan-legend"><span>${E.getProfile(state, s.profileId).name}</span><span data-live="sessionLeft"></span></div>
-    ${pauseUI}
-    <div class="actions">
-      ${sv.pause === 'none' ? `<button class="btn" type="button" data-act="pause" ${canPause ? '' : 'disabled'} title="${isFocus ? 'Blocking keeps running for 2 minutes first' : 'Only during focus time'}">Pause</button>` : ''}
-      <button class="btn danger" type="button" data-act="quit">Quit session</button>
-    </div>
-    <div class="blocking-line" data-live="blockingLine"></div>
-    ${npCard()}
-  </section>`;
+function customEditor(p) {
+  const field = (f, label) => `<div class="stepper">
+      <label for="cf-${f}">${label}</label>
+      <div class="ctl">
+        <button type="button" data-act="cstep" data-f="${f}" data-d="-1" aria-label="Less ${label.toLowerCase()}">−</button>
+        <input id="cf-${f}" type="number" inputmode="numeric" data-cf="${f}" value="${p[f]}" min="${E.LIMITS[f][0]}" max="${E.LIMITS[f][1]}" />
+        <button type="button" data-act="cstep" data-f="${f}" data-d="1" aria-label="More ${label.toLowerCase()}">+</button>
+      </div>
+    </div>`;
+  return `<div class="custom">
+    ${field('focusMin', 'Focus min')}
+    ${field('breakMin', 'Break min')}
+    ${field('cycles', 'Blocks')}
+    ${field('longBreakMin', 'Long break')}
+  </div>`;
 }
 
 function viewLockout(t) {
@@ -237,18 +219,54 @@ function viewLockout(t) {
   const next = E.RULES.lockoutMs[Math.min(n, E.RULES.lockoutMs.length - 1)];
   const em = E.emergencyAvailable(state, t);
   return `<section class="focus">
-    <div class="phase-label"><span class="tag" style="color:var(--neg)">Locked</span><span>Blocks on</span></div>
+    <div class="phase-label"><span class="tag" style="color:var(--neg)">Locked</span></div>
     <p class="timer lock-timer" data-live="lockout"></p>
     <p class="intention-line">${esc(v.lockoutTitle)}</p>
-    <p class="muted" style="margin:-8px 0 0;max-width:44ch">${esc(v.lockoutBody(fmtMin(total)))}</p>
-    <div class="terms">
-      <div class="row"><span class="k">This week</span><span>${n} ${n === 1 ? 'quit' : 'quits'}. The next one locks blocks for <b class="neg">${fmtMin(next)}</b>.</span></div>
-      <div class="row"><span class="k">Debt</span><span>${state.debtMs ? `<b class="neg">${fmtMin(state.debtMs)}</b> will be added to your next session.` : 'Nothing owed.'}</span></div>
-      <div class="row"><span class="k">Streak</span><span>Reset to 0.</span></div>
-      <div class="row"><span class="k">Emergency</span><span>${em ? `Available. <button class="link neg" type="button" data-act="emergency">Unlock now</button>` : 'Used this week. It comes back on Monday.'}</span></div>
-    </div>
-    ${npCard()}
+    <p class="quiet-line">${esc(v.lockoutBody(fmtMin(total)))}</p>
+    <p class="quiet-line">${n} ${n === 1 ? 'quit' : 'quits'} this week, so the next one locks blocks for ${fmtMin(next)}.${state.debtMs ? ` ${fmtMin(state.debtMs)} of debt goes on your next session.` : ''}
+      ${em ? `<br><button class="link neg" type="button" data-act="emergency">Emergency unlock</button>` : '<br>Emergency unlock is used for this week.'}</p>
   </section>`;
+}
+
+// ----- full-screen session -----
+
+function renderZen(t) {
+  const s = state.session;
+  if (!s) {
+    zen.hidden = true;
+    zen.innerHTML = '';
+    document.body.classList.remove('in-session');
+    return;
+  }
+  document.body.classList.add('in-session');
+  const sv = E.sessionView(state, t);
+  const v = voice(state);
+  const isFocus = sv.phase.kind === 'focus';
+  zen.hidden = false;
+  zen.className = 'zen' + (isFocus ? (sv.pause === 'paused' ? ' paused' : '') : ' brk');
+  if (!isFocus) {
+    zen.innerHTML = `
+      <div class="z-label">${sv.phase.kind === 'long' ? 'Long break' : 'Break'}</div>
+      <div class="z-timer" data-live="timer"></div>
+      <div class="z-np" data-np="full"></div>
+      <div class="z-bottom"><button class="z-btn" type="button" data-act="quit">Quit session</button></div>`;
+    return;
+  }
+  let pause = '';
+  if (sv.pause === 'pending') {
+    pause = `<div class="z-pause">${esc(v.pausePending)} <b data-live="pauseIn"></b><button class="z-btn" type="button" data-act="cancelPause">Cancel</button></div>`;
+  } else if (sv.pause === 'paused') {
+    pause = `<div class="z-pause">Blocking is off. Resumes by itself in <b data-live="pauseOut"></b><button class="z-btn strong" type="button" data-act="resume">Resume now</button></div>`;
+  }
+  zen.innerHTML = `
+    <div class="z-label">${sv.pause === 'paused' ? 'Paused' : 'Focus'} · ${sv.focusIndex} of ${sv.focusTotal}</div>
+    <div class="z-timer" data-live="timer"></div>
+    ${s.intention ? `<p class="z-intent">${esc(s.intention)}</p>` : ''}
+    ${pause}
+    <div class="z-bottom">
+      ${sv.pause === 'none' ? `<button class="z-btn" type="button" data-act="pause" ${sv.remaining > E.RULES.pauseWaitMs ? '' : 'disabled'}>Pause</button>` : ''}
+      <button class="z-btn" type="button" data-act="quit">Quit</button>
+    </div>`;
 }
 
 // ----- blocklist -----
@@ -387,21 +405,25 @@ function viewSettings(t) {
   const v = state.settings.voice;
   const sampleVoice = voice({ settings: { voice: v } });
   const em = E.emergencyAvailable(state, t);
+  const named = state.profiles.filter((p) => !p.custom).length;
   return `<div class="page-head"><div><h1>Settings</h1><p>Session types, voice and appearance.</p></div></div>
     ${locked ? `<div class="banner">Session types and data are locked until the ${state.session ? 'session' : 'lockout'} ends.</div>` : ''}
     <div class="section" style="margin-top:0">
       <h2>Session types</h2>
       <div class="table-wrap ptable"><table>
         <thead><tr><th>Name</th><th>Focus (min)</th><th>Break</th><th>Long break</th><th>Blocks</th><th></th></tr></thead>
-        <tbody>${state.profiles.map((p, i) => `<tr>
+        <tbody>${state.profiles.map((p, i) => (p.custom ? '' : `<tr>
           <td><input class="input sm" data-pf="name" data-i="${i}" value="${esc(p.name)}" maxlength="24" aria-label="Name" ${dis} /></td>
           <td><input class="input sm n" type="number" min="5" max="180" data-pf="focusMin" data-i="${i}" value="${p.focusMin}" aria-label="Focus minutes" ${dis} /></td>
           <td><input class="input sm n" type="number" min="1" max="60" data-pf="breakMin" data-i="${i}" value="${p.breakMin}" aria-label="Break minutes" ${dis} /></td>
           <td><input class="input sm n" type="number" min="0" max="60" data-pf="longBreakMin" data-i="${i}" value="${p.longBreakMin}" aria-label="Long break minutes" ${dis} /></td>
           <td><input class="input sm n" type="number" min="1" max="8" data-pf="cycles" data-i="${i}" value="${p.cycles}" aria-label="Focus blocks" ${dis} /></td>
-          <td><button class="btn quiet" type="button" data-act="rmProfile" data-i="${i}" ${dis || state.profiles.length < 2 ? 'disabled' : ''} aria-label="Delete ${esc(p.name)}">Delete</button></td>
-        </tr>`).join('')}</tbody></table></div>
-      <div style="margin-top:10px"><button class="btn" type="button" data-act="addProfile" ${dis}>Add session type</button></div>
+          <td><button class="btn quiet" type="button" data-act="rmProfile" data-i="${i}" ${dis || named < 2 ? 'disabled' : ''} aria-label="Delete ${esc(p.name)}">Delete</button></td>
+        </tr>`)).join('')}</tbody></table></div>
+      <div class="actions" style="justify-content:flex-start;margin-top:10px;align-items:center">
+        <button class="btn" type="button" data-act="addProfile" ${dis}>Add session type</button>
+        <span class="muted small">Custom is set right on the Focus page.</span>
+      </div>
     </div>
     <div class="section">
       <h2>Voice</h2>
@@ -447,8 +469,16 @@ function setText(sel, text) {
   return el;
 }
 
+function setDigits(sel, str) {
+  const el = document.querySelector(`[data-live="${sel}"]`);
+  if (el && el.dataset.v !== str) {
+    el.dataset.v = str;
+    el.innerHTML = digits(str);
+  }
+}
+
 function updateLive(t) {
-  // status pill
+  // sidebar status
   const st = $('#status');
   let cls = '';
   let txt = 'Ready';
@@ -457,45 +487,20 @@ function updateLive(t) {
     txt = `Locked ${fmtClock(state.lockout.until - t)}`;
   } else if (state.session) {
     const sv = E.sessionView(state, t);
-    cls = sv.pause === 'paused' ? '' : 'on';
-    txt = sv.pause === 'paused' ? `Paused ${fmtClock(sv.remaining)}` : sv.pause === 'pending' ? `Pausing in ${fmtClock(sv.pauseStartsIn)}` : `${sv.phase.kind === 'focus' ? 'Focus' : 'Break'} ${fmtClock(sv.remaining)}`;
+    txt = `${sv.phase.kind === 'focus' ? 'Focus' : 'Break'} ${fmtClock(sv.remaining)}`;
   }
-  const html = `<span class="dot"></span><span class="txt">${txt}</span>`;
+  const html = `<span class="dot"></span><span>${txt}</span>`;
   if (st.innerHTML !== html) st.innerHTML = html;
-  st.className = 'status ' + cls;
+  st.className = 'sb-status ' + cls;
   document.title = state.session || cls === 'lock' ? `${txt} · Togami` : 'Togami';
 
   if (state.session) {
     const sv = E.sessionView(state, t);
-    const timer = document.querySelector('[data-live="timer"]');
-    const str = fmtClock(sv.remaining);
-    if (timer && timer.dataset.v !== str) {
-      timer.dataset.v = str;
-      timer.innerHTML = digits(str);
-    }
-    const seg = document.querySelector(`[data-seg="${sv.phaseIndex}"]`);
-    if (seg) seg.style.setProperty('--p', `${(sv.elapsed / sv.phase.ms) * 100}%`);
-    setText('sessionLeft', `${fmtMin(sv.sessionRemaining)} left`);
+    setDigits('timer', fmtClock(sv.remaining));
     setText('pauseIn', fmtClock(sv.pauseStartsIn));
     setText('pauseOut', fmtClock(sv.pauseEndsIn));
-    const b = E.blocking(state, t);
-    const line = document.querySelector('[data-live="blockingLine"]');
-    if (line) {
-      const p = E.getProfile(state, state.session.profileId);
-      const h = b.on ? `<span class="dot"></span>Blocking ${p.apps.length} apps and ${p.sites.length} sites` : `<span class="dot"></span>Blocking is off ${b.why === 'paused' ? 'while paused' : 'during this break'}`;
-      if (line.innerHTML !== h) line.innerHTML = h;
-      line.classList.toggle('off', !b.on);
-    }
   }
-  if (E.lockoutActive(state, t)) {
-    const el = document.querySelector('[data-live="lockout"]');
-    const str = fmtClock(state.lockout.until - t);
-    if (el && el.dataset.v !== str) {
-      el.dataset.v = str;
-      el.innerHTML = digits(str);
-    }
-  }
-  // overlays
+  if (E.lockoutActive(state, t)) setDigits('lockout', fmtClock(state.lockout.until - t));
   if (overlay?.type === 'block') {
     const left = blockLeft(t);
     setText('blockRemain', left == null ? '' : fmtClock(left));
@@ -522,6 +527,7 @@ function renderOverlay() {
   overlayEl.innerHTML = fn();
   const focusEl = overlayEl.querySelector('[autofocus]') || overlayEl.querySelector('button');
   focusEl?.focus({ preventScroll: true });
+  if (overlay.type === 'quit' && overlay.step === 1) bindHold();
 }
 
 function markSvg() {
@@ -560,7 +566,7 @@ function ovQuit() {
     return `<div class="modal" role="dialog" aria-labelledby="qt">${steps}
       <h2 id="qt">Quit this session?</h2>
       <p>Quitting has a cost. You'll see it before anything happens.</p>
-      <button class="hold" type="button" id="holdBtn" style="--h:0%"><span id="holdTxt">${esc(v.quitHold)}</span></button>
+      <button class="hold" type="button" id="holdBtn" style="--h:0%"><span>${esc(v.quitHold)}</span></button>
       <p class="small">${esc(v.quitHoldHint)}</p>
       <div class="actions"><button class="btn primary" type="button" data-act="close" autofocus>${esc(v.neverMind)}</button></div>
       ${foot}</div>`;
@@ -647,32 +653,35 @@ media.subscribe((track) => {
 });
 
 function fillNowPlaying() {
-  const el = $('#np');
-  if (!el) return;
+  for (const slot of document.querySelectorAll('[data-np]')) fillSlot(slot, slot.dataset.np);
+}
+
+function fillSlot(slot, size) {
   const tr = nowPlaying;
   if (!tr) {
-    el.className = 'np empty';
-    el.innerHTML = 'Nothing playing';
+    slot.className = `np ${size} empty`;
+    slot.innerHTML = 'Nothing playing';
+    delete slot.dataset.k;
     return;
   }
   const key = `${tr.title}|${tr.playing}`;
-  if (el.dataset.k !== key) {
-    el.dataset.k = key;
-    el.className = 'np';
+  if (slot.dataset.k !== key) {
+    slot.dataset.k = key;
+    slot.className = `np ${size}`;
     const hue = [...tr.title].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 7);
-    el.innerHTML = `<div class="art" style="background:linear-gradient(135deg, hsl(${hue} 32% 46%), hsl(${(hue + 50) % 360} 38% 28%))" aria-hidden="true">${esc(tr.title[0])}</div>
+    const btn = (act, label, path) => `<button type="button" data-act="${act}" aria-label="${label}"><svg viewBox="0 0 16 16"><path d="${path}"/></svg></button>`;
+    const play = tr.playing ? btn('mToggle', 'Pause', 'M4 3h3v10H4zM9 3h3v10H9z') : btn('mToggle', 'Play', 'M4 2.5v11L13 8z');
+    slot.innerHTML = `<div class="art" style="background:linear-gradient(135deg, hsl(${hue} 32% 46%), hsl(${(hue + 50) % 360} 38% 28%))" aria-hidden="true">${esc(tr.title[0])}</div>
       <div class="meta">
-        <div class="t">${esc(tr.title)}${tr.sample ? '<span class="sample">Sample</span>' : ''}</div>
-        <div class="a">${esc(tr.artist)} · ${esc(tr.source)}</div>
+        <div class="t">${esc(tr.title)}${tr.sample && size !== 'mini' ? '<span class="sample">Sample</span>' : ''}</div>
+        <div class="a">${esc(tr.artist)}${size === 'mini' ? '' : ` · ${esc(tr.source)}`}</div>
         <div class="bar"><b></b></div>
       </div>
       <div class="ctl">
-        <button type="button" data-act="mPrev" aria-label="Previous track"><svg viewBox="0 0 16 16"><path d="M3 3h2v10H3zM13 3v10L6 8z"/></svg></button>
-        <button type="button" data-act="mToggle" aria-label="${tr.playing ? 'Pause' : 'Play'}">${tr.playing ? '<svg viewBox="0 0 16 16"><path d="M4 3h3v10H4zM9 3h3v10H9z"/></svg>' : '<svg viewBox="0 0 16 16"><path d="M4 2.5v11L13 8z"/></svg>'}</button>
-        <button type="button" data-act="mNext" aria-label="Next track"><svg viewBox="0 0 16 16"><path d="M11 3h2v10h-2zM3 3v10l7-5z"/></svg></button>
+        ${size === 'mini' ? play : btn('mPrev', 'Previous track', 'M3 3h2v10H3zM13 3v10L6 8z') + play + btn('mNext', 'Next track', 'M11 3h2v10h-2zM3 3v10l7-5z')}
       </div>`;
   }
-  const bar = el.querySelector('.bar b');
+  const bar = slot.querySelector('.bar b');
   if (bar) bar.style.width = tr.durationMs ? `${Math.min(100, (tr.positionMs / tr.durationMs) * 100)}%` : '100%';
 }
 
@@ -699,17 +708,35 @@ document.addEventListener('click', (ev) => {
   const act = btn.dataset.act;
   const t = now();
   switch (act) {
+    case 'sidebar':
+      if (narrowMq.matches) mobileSidebar = !mobileSidebar;
+      else {
+        state.settings.sidebar = !state.settings.sidebar;
+        commit();
+      }
+      applySidebar();
+      break;
     case 'profile':
       state.profileId = btn.dataset.id;
       editProfileId = btn.dataset.id;
       commit();
       render();
       break;
+    case 'cstep': {
+      const p = E.getProfile(state, 'custom');
+      const f = btn.dataset.f;
+      const step = f === 'focusMin' ? 5 : 1;
+      p[f] = E.clampField(f, p[f] + Number(btn.dataset.d) * step, p[f]);
+      commit();
+      render();
+      break;
+    }
     case 'start': {
       intentionDraft = $('#intention')?.value ?? intentionDraft;
       const ev2 = E.start(state, { intention: intentionDraft }, t);
       if (ev2[0]?.type === 'started') {
         intentionDraft = '';
+        appWindow.setFullscreen(true);
         if (ev2[0].debtMs) toast(`${fmtMin(ev2[0].debtMs)} of debt added to this block.`, 'neg');
       }
       handle(ev2);
@@ -731,7 +758,6 @@ document.addEventListener('click', (ev) => {
     case 'quit':
       overlay = { type: 'quit', step: 1 };
       renderOverlay();
-      bindHold();
       break;
     case 'phraseNext':
       overlay.step = 3;
@@ -801,14 +827,16 @@ document.addEventListener('click', (ev) => {
     case 'addProfile': {
       if (E.isLocked(state, t)) return;
       const id = 'p' + Date.now().toString(36);
-      state.profiles.push({ id, name: 'New session', focusMin: 30, breakMin: 5, longBreakMin: 15, cycles: 3, apps: ['Discord'], sites: ['youtube.com'] });
+      state.profiles.splice(state.profiles.length - 1, 0, { id, name: 'New session', focusMin: 30, breakMin: 5, longBreakMin: 15, cycles: 3, apps: ['Discord'], sites: ['youtube.com'] });
       commit();
       render();
       break;
     }
     case 'rmProfile': {
-      if (E.isLocked(state, t) || state.profiles.length < 2) return;
-      const [gone] = state.profiles.splice(Number(btn.dataset.i), 1);
+      if (E.isLocked(state, t)) return;
+      const i = Number(btn.dataset.i);
+      if (state.profiles[i]?.custom || state.profiles.filter((p) => !p.custom).length < 2) return;
+      const [gone] = state.profiles.splice(i, 1);
       if (state.profileId === gone.id) state.profileId = state.profiles[0].id;
       if (editProfileId === gone.id) editProfileId = state.profileId;
       commit();
@@ -832,6 +860,7 @@ document.addEventListener('click', (ev) => {
       editProfileId = state.profileId;
       overlay = null;
       applyTheme();
+      applySidebar();
       commit();
       render();
       toast('Everything was reset.');
@@ -868,6 +897,11 @@ document.addEventListener('input', (ev) => {
 });
 
 document.addEventListener('keydown', (ev) => {
+  if ((ev.ctrlKey || ev.metaKey) && ev.key === '\\') {
+    ev.preventDefault();
+    $('[data-act="sidebar"]').click();
+    return;
+  }
   if (ev.key === 'Enter' && ev.target.id === 'intention') {
     ev.preventDefault();
     $('[data-act="start"]')?.click();
@@ -915,15 +949,17 @@ document.addEventListener('change', (ev) => {
     commit();
     render();
   }
+  if (el.dataset.cf) {
+    const p = E.getProfile(state, 'custom');
+    p[el.dataset.cf] = E.clampField(el.dataset.cf, el.value, p[el.dataset.cf]);
+    commit();
+    render();
+  }
   if (el.dataset.pf) {
     const p = state.profiles[Number(el.dataset.i)];
     const f = el.dataset.pf;
     if (f === 'name') p.name = el.value.trim() || p.name;
-    else {
-      const n = Math.round(Number(el.value));
-      const lim = { focusMin: [5, 180], breakMin: [1, 60], longBreakMin: [0, 60], cycles: [1, 8] }[f];
-      p[f] = Math.min(lim[1], Math.max(lim[0], Number.isFinite(n) ? n : p[f]));
-    }
+    else p[f] = E.clampField(f, el.value, p[f]);
     commit();
     render();
   }
@@ -979,6 +1015,11 @@ function applyTheme() {
   const t = state.settings.theme;
   if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
   else delete document.documentElement.dataset.theme;
+}
+
+function applySidebar() {
+  const open = narrowMq.matches ? mobileSidebar : state.settings.sidebar;
+  shell.classList.toggle('sb-hidden', !open);
 }
 
 function toast(msg, kind = '') {

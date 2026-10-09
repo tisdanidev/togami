@@ -196,3 +196,21 @@ test('week stats count focus time, quits and distractions', () => {
   assert.deepEqual(w.distractions[0], { target: 'Discord', count: 2 });
   assert.equal(w.days[2], 50 * MIN); // Wednesday
 });
+
+test('custom session type is always present and last after loading old state', () => {
+  const old = E.defaultState();
+  old.profiles = old.profiles.filter((p) => !p.custom);
+  old.profileId = 'gone';
+  const s = E.normalizeState(old);
+  assert.equal(s.profiles.at(-1).id, 'custom');
+  assert.equal(s.profiles.filter((p) => p.custom).length, 1);
+  assert.equal(s.profileId, 'essay');
+  assert.equal(s.settings.sidebar, true);
+});
+
+test('timer fields are clamped to their limits', () => {
+  assert.equal(E.clampField('focusMin', 500, 25), 180);
+  assert.equal(E.clampField('focusMin', 'abc', 25), 25);
+  assert.equal(E.clampField('longBreakMin', -3, 10), 0);
+  assert.equal(E.clampField('cycles', 2.6, 1), 3);
+});

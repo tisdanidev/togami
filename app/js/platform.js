@@ -28,6 +28,20 @@ export const blocker = {
   },
 };
 
+// ---------- window ----------
+
+export const appWindow = {
+  /** Full screen while a session runs. Native: the Tauri window; browser: the Fullscreen API (needs a click). */
+  async setFullscreen(on) {
+    try {
+      if (on && !document.fullscreenElement) await document.documentElement.requestFullscreen?.();
+      if (!on && document.fullscreenElement) await document.exitFullscreen?.();
+    } catch {
+      // refused (no user gesture, or not allowed here): the in-app full-screen view still shows
+    }
+  },
+};
+
 // ---------- media ----------
 
 const SAMPLE = [

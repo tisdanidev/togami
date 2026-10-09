@@ -23,10 +23,11 @@ export function defaultState() {
       profile('essay', 'Essay', 50, 10, 20, 3, ['Discord', 'Steam'], ['youtube.com', 'reddit.com', 'tiktok.com', 'instagram.com']),
       profile('revision', 'Revision', 25, 5, 15, 4, ['Discord', 'Steam', 'Epic Games'], ['youtube.com', 'reddit.com', 'tiktok.com', 'instagram.com', 'x.com', 'twitch.tv']),
       profile('deep', 'Deep work', 90, 20, 20, 2, ['Discord', 'Steam', 'Epic Games', 'WhatsApp'], ['youtube.com', 'reddit.com', 'tiktok.com', 'instagram.com', 'x.com', 'twitch.tv', 'netflix.com']),
+      customProfile(),
     ],
     profileId: 'essay',
     allowlist: ['docs.google.com', 'Calculator'],
-    settings: { voice: 'neutral', theme: 'system', blockBreaks: false },
+    settings: { voice: 'neutral', theme: 'system', blockBreaks: false, sidebar: true },
     session: null,
     lockout: null, // { until, ledgerId }
     debtMs: 0,
@@ -42,6 +43,31 @@ export function defaultState() {
 
 function profile(id, name, focus, brk, long, cycles, apps, sites) {
   return { id, name, focusMin: focus, breakMin: brk, longBreakMin: long, cycles, apps, sites };
+}
+
+/** The "Custom" session type, edited straight from the Focus page. Always last, can't be deleted. */
+function customProfile() {
+  return { ...profile('custom', 'Custom', 40, 8, 0, 2, ['Discord', 'Steam'], ['youtube.com', 'reddit.com', 'tiktok.com', 'instagram.com']), custom: true };
+}
+
+/** Limits for timer fields, shared by Settings and the Custom editor. */
+export const LIMITS = { focusMin: [5, 180], breakMin: [1, 60], longBreakMin: [0, 60], cycles: [1, 8] };
+
+export function clampField(field, value, fallback) {
+  const [lo, hi] = LIMITS[field];
+  const n = Math.round(Number(value));
+  return Math.min(hi, Math.max(lo, Number.isFinite(n) ? n : fallback));
+}
+
+/** Bring saved state from older versions up to date. */
+export function normalizeState(s) {
+  const d = defaultState();
+  const out = { ...d, ...s, settings: { ...d.settings, ...s.settings } };
+  out.profiles = (out.profiles || []).filter((p) => !p.custom);
+  const savedCustom = (s.profiles || []).find((p) => p.custom);
+  out.profiles.push(savedCustom ?? customProfile());
+  if (!out.profiles.some((p) => p.id === out.profileId)) out.profileId = out.profiles[0].id;
+  return out;
 }
 
 // ---------- time helpers ----------

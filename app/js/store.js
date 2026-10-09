@@ -1,7 +1,7 @@
 // Saves app state on this device. The Windows build swaps this for a file in
 // the app data folder; the shape stays the same.
 
-import { defaultState } from './engine.js';
+import { normalizeState } from './engine.js';
 
 const KEY = 'togami.state.v1';
 const SEEN = 'togami.lastSeen';
@@ -11,7 +11,7 @@ export function load() {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const s = JSON.parse(raw);
-      if (s && s.version === 1) return { ...defaultState(), ...s, settings: { ...defaultState().settings, ...s.settings } };
+      if (s && s.version === 1) return normalizeState(s);
     }
   } catch {
     // storage blocked or corrupt: start fresh
