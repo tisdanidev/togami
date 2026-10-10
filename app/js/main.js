@@ -42,7 +42,16 @@ function now() {
 
 function commit() {
   store.save(state);
-  blocker.sync(state);
+  syncBlocker();
+}
+
+/** Tell the native watcher what to block right now (nothing when blocking is off). */
+function syncBlocker() {
+  const b = E.blocking(state, now());
+  if (!b.on) return blocker.sync({ active: false, apps: [], sites: [] });
+  const allowed = new Set([...E.ALWAYS_ALLOWED, ...state.allowlist].map((x) => x.toLowerCase()));
+  const keep = (x) => !allowed.has(x.toLowerCase());
+  blocker.sync({ active: true, apps: b.profile.apps.filter(keep), sites: b.profile.sites.filter(keep) });
 }
 
 // ---------- boot ----------
@@ -79,6 +88,7 @@ function loop() {
     lastSeenWrite = Date.now();
     store.markSeen(lastSeenWrite);
     store.save(state);
+    syncBlocker();
   }
   // quit ceremony: the wait step finishes on its own
   if (overlay?.type === 'quit' && overlay.step === 3 && t >= overlay.waitUntil) {
@@ -664,14 +674,17 @@ function fillSlot(slot, size) {
     delete slot.dataset.k;
     return;
   }
-  const key = `${tr.title}|${tr.playing}`;
+  const key = `${tr.title}|${tr.artist}|${tr.playing}|${tr.art ? 1 : 0}`;
   if (slot.dataset.k !== key) {
     slot.dataset.k = key;
     slot.className = `np ${size}`;
     const hue = [...tr.title].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 7);
     const btn = (act, label, path) => `<button type="button" data-act="${act}" aria-label="${label}"><svg viewBox="0 0 16 16"><path d="${path}"/></svg></button>`;
     const play = tr.playing ? btn('mToggle', 'Pause', 'M4 3h3v10H4zM9 3h3v10H9z') : btn('mToggle', 'Play', 'M4 2.5v11L13 8z');
-    slot.innerHTML = `<div class="art" style="background:linear-gradient(135deg, hsl(${hue} 32% 46%), hsl(${(hue + 50) % 360} 38% 28%))" aria-hidden="true">${esc(tr.title[0])}</div>
+    const art = tr.art
+      ? `<div class="art" style="background:center / cover no-repeat url('${tr.art}')" aria-hidden="true"></div>`
+      : `<div class="art" style="background:linear-gradient(135deg, hsl(${hue} 32% 46%), hsl(${(hue + 50) % 360} 38% 28%))" aria-hidden="true">${esc(tr.title[0])}</div>`;
+    slot.innerHTML = `${art}
       <div class="meta">
         <div class="t">${esc(tr.title)}${tr.sample && size !== 'mini' ? '<span class="sample">Sample</span>' : ''}</div>
         <div class="a">${esc(tr.artist)}${size === 'mini' ? '' : ` · ${esc(tr.source)}`}</div>

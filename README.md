@@ -27,29 +27,52 @@ A focus timer and distraction blocker for students. Pick a session type, say wha
 
 ```bash
 npm install
-npm run dev      # http://localhost:5173
+npm run dev      # browser version on http://localhost:5173
 npm test         # session and penalty rules
-npm run build    # dist/togami.html, a single-file test build
+npm run build    # dist/togami.html, a single-file browser test build
 ```
 
-The browser build simulates Windows. Its **Test bench** button (bottom right) speeds up the clock, fakes opening blocked apps and sites, and fakes closing Togami.
+The browser version simulates Windows. Its **Test bench** button (bottom right) speeds up the clock, fakes opening blocked apps and sites, and fakes closing Togami.
+
+## Windows app
+
+The desktop app is a [Tauri](https://tauri.app) shell around `app/` with native code in `src-tauri/`:
+
+- **App blocking:** a background thread checks the foreground window every 0.4 s. A blocked app gets a close request and is minimised; Togami comes to the front with its block screen.
+- **Website blocking:** browsers (Chrome, Edge, Firefox, Brave, Opera, Vivaldi and others) are matched by their window title, e.g. "Funny cats - YouTube - Google Chrome". A match minimises the browser.
+- **Never touched:** Windows Explorer, Task Manager, Settings, the Start menu and Togami itself.
+- **Now playing:** Windows' system media controls (Spotify, browsers, Apple Music, Media Player and others), with album art and play/pause/skip.
+- **Full screen** during sessions. Data is kept in the app's WebView storage under `%LOCALAPPDATA%\dev.tisdani.togami`.
+
+Build on Windows (needs [Rust](https://rustup.rs) and Node):
+
+```bash
+npm install
+npx tauri build          # src-tauri/target/release/bundle/nsis/Togami_0.1.0_x64-setup.exe
+```
+
+Cross-compile from Linux (needs `nsis`, `clang`, `lld` and `cargo install cargo-xwin`):
+
+```bash
+rustup target add x86_64-pc-windows-msvc
+npx tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
+```
+
+Native rule tests: `rustc --edition 2021 --test src-tauri/src/rules.rs -o rules-test && ./rules-test`
+
+### Known limits
+
+- Site blocking reads window titles, so a site whose title doesn't name it can slip through, and a page that mentions a blocked site's name in its title gets blocked. A browser extension is the planned fix.
+- Blocking only applies while Togami is running. Closing it mid-session counts as quitting.
 
 ## Layout
 
 | Path | What |
 | --- | --- |
 | `app/js/engine.js` | All session, pause, penalty and ledger rules. Pure functions, tested in `test/engine.test.js` |
-| `app/js/platform.js` | Windows integration point: blocking, media, window. Simulated in the browser |
+| `app/js/platform.js` | Bridge to the native code (blocking, media, full screen); simulated in the browser |
+| `src-tauri/` | Windows app: `blocker.rs` (foreground window watcher), `media.rs` (now playing), `rules.rs` (matching rules, tested) |
+| `app/fonts/` | Bundled Newsreader and IBM Plex (SIL Open Font License) |
 | `app/js/main.js` | UI |
 | `app/js/voice.js` | Copy for the Neutral and Heir voices |
 | `app/styles.css` | Design tokens and styles (light and dark) |
-
-## Windows build (next)
-
-The plan is a [Tauri](https://tauri.app) app wrapping `app/`, with native code behind `platform.js`:
-
-- **App blocking:** watch the foreground window and minimise or close blocked apps, then show Togami's block screen.
-- **Website blocking:** a small Chrome/Edge/Firefox extension that redirects to the block screen, with a window-title check as a fallback.
-- **Now playing:** the Windows media session API (Spotify, browsers and other players).
-- **Window:** tray icon, start with Windows, compact always-on-top mode.
-- **Storage:** state saved to the app data folder instead of `localStorage`.

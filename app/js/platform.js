@@ -1,21 +1,29 @@
-// Windows integration lives behind this file. In the browser build everything
-// is simulated so the app can be tested; the Windows build (Tauri) replaces
-// these with native calls:
-//   blocker  -> watch the foreground window, minimise/close blocked apps,
-//               browser extension or window-title check for sites
-//   media    -> Windows media session API (Spotify, browsers, etc.)
-//   window   -> always-on-top compact mode, tray, start with Windows
+// Windows integration lives behind this file. In the desktop app (Tauri) these
+// call the native code in src-tauri/; in the browser test build everything is
+// simulated so the app can be tried without Windows.
+//   blocker  -> native thread watches the foreground window, closes blocked
+//               apps, minimises browsers showing blocked sites
+//   media    -> Windows media controls (Spotify, browsers and other players)
+//   window   -> full screen during sessions
 
-export const isNative = Boolean(globalThis.__TAURI__);
+const T = globalThis.__TAURI__;
+export const isNative = Boolean(T);
 
 // ---------- blocker ----------
 
 const blockerListeners = new Set();
+let lastSync = '';
 
 export const blocker = {
-  /** Called by the app whenever the blocklist or session state changes. */
-  sync(_state) {
-    // native: push the current lists to the background watcher
+  /** Push the current lists to the native watcher. `config` = { active, apps, sites }. */
+  sync(config) {
+    if (!isNative) return;
+    const key = JSON.stringify(config);
+    if (key === lastSync) return;
+    lastSync = key;
+    T.core.invoke('blocker_sync', { config }).catch(() => {
+      lastSync = '';
+    });
   },
   /** Register a handler for "user tried to open something". */
   onAttempt(fn) {
@@ -28,12 +36,22 @@ export const blocker = {
   },
 };
 
+if (isNative) {
+  T.event.listen('blocked-attempt', (e) => {
+    for (const fn of blockerListeners) fn(e.payload);
+  });
+}
+
 // ---------- window ----------
 
 export const appWindow = {
-  /** Full screen while a session runs. Native: the Tauri window; browser: the Fullscreen API (needs a click). */
+  /** Full screen while a session runs. */
   async setFullscreen(on) {
     try {
+      if (isNative) {
+        await T.window.getCurrentWindow().setFullscreen(on);
+        return;
+      }
       if (on && !document.fullscreenElement) await document.documentElement.requestFullscreen?.();
       if (!on && document.fullscreenElement) await document.exitFullscreen?.();
     } catch {
@@ -44,70 +62,90 @@ export const appWindow = {
 
 // ---------- media ----------
 
-const SAMPLE = [
-  { title: 'Weightless', artist: 'Marconi Union', source: 'Spotify', durationMs: 488_000 },
-  { title: 'Clair de Lune', artist: 'Claude Debussy', source: 'Spotify', durationMs: 302_000 },
-  { title: 'lofi hip hop radio', artist: 'Lofi Girl', source: 'Edge', durationMs: 0 },
-  { title: 'Experience', artist: 'Ludovico Einaudi', source: 'Spotify', durationMs: 315_000 },
-];
-
 const mediaListeners = new Set();
-let track = 0;
-let playing = true;
-let position = 92_000;
-let enabled = true;
-let lastTick = Date.now();
-
-function current() {
-  if (!enabled) return null;
-  return { ...SAMPLE[track], playing, positionMs: position, sample: !isNative };
-}
+let current = null;
 
 function emit() {
-  const t = current();
-  for (const fn of mediaListeners) fn(t);
+  for (const fn of mediaListeners) fn(current);
 }
 
-setInterval(() => {
-  const nowReal = Date.now();
-  if (enabled && playing) {
-    position += nowReal - lastTick;
-    const d = SAMPLE[track].durationMs;
-    if (d && position >= d) {
+let control;
+const testHooks = {}; // browser build only
+
+if (isNative) {
+  const poll = async () => {
+    try {
+      const t = await T.core.invoke('media_now');
+      current = t ? { ...t, sample: false } : null;
+    } catch {
+      current = null;
+    }
+    emit();
+  };
+  poll();
+  setInterval(poll, 1000);
+  control = (action) => T.core.invoke('media_control', { action }).then(() => setTimeout(poll, 250)).catch(() => {});
+} else {
+  // sample player for the browser build
+  const SAMPLE = [
+    { title: 'Weightless', artist: 'Marconi Union', source: 'Spotify', durationMs: 488_000 },
+    { title: 'Clair de Lune', artist: 'Claude Debussy', source: 'Spotify', durationMs: 302_000 },
+    { title: 'lofi hip hop radio', artist: 'Lofi Girl', source: 'Edge', durationMs: 0 },
+    { title: 'Experience', artist: 'Ludovico Einaudi', source: 'Spotify', durationMs: 315_000 },
+  ];
+  let track = 0;
+  let playing = true;
+  let position = 92_000;
+  let enabled = true;
+  let lastTick = Date.now();
+  const snapshot = () => {
+    current = enabled ? { ...SAMPLE[track], playing, positionMs: position, sample: true } : null;
+    emit();
+  };
+  setInterval(() => {
+    const nowReal = Date.now();
+    if (enabled && playing) {
+      position += nowReal - lastTick;
+      const d = SAMPLE[track].durationMs;
+      if (d && position >= d) {
+        track = (track + 1) % SAMPLE.length;
+        position = 0;
+      }
+    }
+    lastTick = nowReal;
+    snapshot();
+  }, 1000);
+  control = (action) => {
+    if (action === 'toggle') playing = !playing;
+    if (action === 'next') {
       track = (track + 1) % SAMPLE.length;
       position = 0;
+      playing = true;
     }
-  }
-  lastTick = nowReal;
-  emit();
-}, 1000);
+    if (action === 'previous') {
+      if (position <= 4000) track = (track - 1 + SAMPLE.length) % SAMPLE.length;
+      position = 0;
+    }
+    snapshot();
+  };
+  testHooks.setEnabled = (on) => {
+    enabled = on;
+    snapshot();
+  };
+  testHooks.isEnabled = () => enabled;
+  snapshot();
+}
 
 export const media = {
   subscribe(fn) {
     mediaListeners.add(fn);
-    fn(current());
+    fn(current);
     return () => mediaListeners.delete(fn);
   },
-  toggle() {
-    playing = !playing;
-    emit();
-  },
-  next() {
-    track = (track + 1) % SAMPLE.length;
-    position = 0;
-    playing = true;
-    emit();
-  },
-  previous() {
-    if (position > 4000) position = 0;
-    else track = (track - 1 + SAMPLE.length) % SAMPLE.length;
-    position = 0;
-    emit();
-  },
-  /** Test bench: switch the sample player on or off. */
-  setEnabled(on) {
-    enabled = on;
-    emit();
-  },
-  isEnabled: () => enabled,
+  toggle: () => control('toggle'),
+  next: () => control('next'),
+  previous: () => control('previous'),
+  /** Test bench only: switch the sample player on or off. */
+  setEnabled: (on) => testHooks.setEnabled?.(on),
+  isEnabled: () => testHooks.isEnabled?.() ?? true,
 };
