@@ -3,7 +3,7 @@
 import * as E from './engine.js';
 import * as store from './store.js';
 import * as clock from './clock.js';
-import { blocker, media, appWindow, notify, updater, isNative } from './platform.js';
+import { blocker, media, appWindow, notify, updater, isNative, isDev } from './platform.js';
 import * as sounds from './sounds.js';
 import { voice, QUIT_PHRASE } from './voice.js';
 import { clock as fmtClock, fmtMin, fmtHours, fmtDate, fmtTime, esc } from './format.js';
@@ -27,6 +27,12 @@ let state = store.load();
 if (!state) {
   state = E.defaultState();
   seedSamples(state, clock.now());
+}
+state.dev = isDev; // dev build: instant pause, free quit, closing isn't a quit
+const APP_NAME = isDev ? 'Togami Dev' : 'Togami';
+if (isDev) {
+  document.body.classList.add('dev');
+  $('.brand .word').insertAdjacentHTML('afterend', '<span class="dev-badge" title="Test build: no quit penalties, instant pause">DEV</span>');
 }
 let route = routeFromHash();
 let editProfileId = state.profileId;
@@ -225,7 +231,7 @@ function viewFocus(t) {
       <input class="input" id="intention" maxlength="120" autocomplete="off" placeholder="${esc(v.idlePrompt)}" aria-label="${esc(v.idlePrompt)}" />
     </div>
     <button class="btn primary big" type="button" data-act="start">${esc(v.start)}</button>
-    <p class="quiet-line">Blocks ${p.apps.length} apps and ${p.sites.length} sites. Quitting locks them for ${fmtMin(cost.lockoutMs)}. <a href="#settings">Rules</a></p>
+    <p class="quiet-line">Blocks ${p.apps.length} apps and ${p.sites.length} sites. ${state.dev ? 'Dev build: quitting and pausing are instant, with no penalties.' : `Quitting locks them for ${fmtMin(cost.lockoutMs)}.`} <a href="#settings">Rules</a></p>
   </section>`;
 }
 
@@ -551,7 +557,7 @@ function updateLive(t) {
   const html = `<span class="dot"></span><span>${txt}</span>`;
   if (st.innerHTML !== html) st.innerHTML = html;
   st.className = 'sb-status ' + cls;
-  document.title = state.session || cls === 'lock' ? `${txt} · Togami` : 'Togami';
+  document.title = state.session || cls === 'lock' ? `${txt} · ${APP_NAME}` : APP_NAME;
 
   if (state.session) {
     const sv = E.sessionView(state, t);
@@ -841,8 +847,17 @@ document.addEventListener('click', (ev) => {
       handle(E.resume(state, t));
       break;
     case 'quit':
+      if (state.dev) {
+        handle(E.quit(state, { reason: 'Dev build' }, t));
+        toast('Session ended. Dev build: no penalties.');
+        break;
+      }
       overlay = { type: 'quit', step: 1 };
       renderOverlay();
+      break;
+    case 'fire':
+      sounds.play(btn.dataset.v);
+      notify(btn.textContent.trim(), 'Test notification from Togami Dev.');
       break;
     case 'phraseNext':
       overlay.step = 3;
@@ -1177,9 +1192,9 @@ function glint() {
   b.classList.add('glint');
 }
 
-// ---------- test bench (browser build only) ----------
+// ---------- test bench (browser build and Togami Dev) ----------
 
-if (!isNative) {
+if (!isNative || isDev) {
   benchToggle.hidden = false;
   benchToggle.addEventListener('click', () => {
     bench.hidden = !bench.hidden;
@@ -1189,11 +1204,11 @@ if (!isNative) {
 }
 
 function renderBench() {
-  if (isNative || bench.hidden) return;
+  if ((isNative && !isDev) || bench.hidden) return;
   const sp = clock.getSpeed();
   bench.innerHTML = `
     <h3>Test bench</h3>
-    <p>This build simulates Windows. The real app watches open windows and browser tabs.</p>
+    <p>${isDev ? 'Togami Dev. Blocking is real; these buttons only simulate.' : 'This build simulates Windows. The real app watches open windows and browser tabs.'}</p>
     <div><h3 style="margin-bottom:6px">Clock speed</h3><div class="row">
       ${[1, 10, 60].map((x) => `<button class="btn" type="button" data-act="speed" data-v="${x}" aria-pressed="${sp === x}">${x}×</button>`).join('')}
       <button class="btn" type="button" data-act="skip" data-v="1">+1 min</button>
@@ -1202,8 +1217,11 @@ function renderBench() {
     <div><h3 style="margin-bottom:6px">Try to open</h3><div class="row">
       ${['Discord', 'Steam', 'youtube.com', 'reddit.com', 'docs.google.com'].map((x) => `<button class="btn" type="button" data-act="sim" data-v="${x}">${x}</button>`).join('')}
     </div></div>
-    <div><h3 style="margin-bottom:6px">Other</h3><div class="row">
+    <div><h3 style="margin-bottom:6px">Jingle and notification</h3><div class="row">
+      ${[['workStart', 'Focus started'], ['breakStart', 'Break time'], ['breakEnd', 'Break over'], ['sessionEnd', 'Session complete']].map(([k, l]) => `<button class="btn" type="button" data-act="fire" data-v="${k}">${l}</button>`).join('')}
+    </div></div>
+    ${isNative ? '' : `<div><h3 style="margin-bottom:6px">Other</h3><div class="row">
       <button class="btn" type="button" data-act="music" aria-pressed="${media.isEnabled()}">Sample music</button>
       <button class="btn" type="button" data-act="closeGap" ${state.session ? '' : 'disabled'}>Close Togami for 2 min</button>
-    </div></div>`;
+    </div></div>`}`;
 }

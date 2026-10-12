@@ -8,7 +8,8 @@
     "dev": "node scripts/serve.mjs",
     "test": "node --test test/*.test.js",
     "build": "node scripts/build-artifact.mjs",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "build:dev-app": "tauri build --config src-tauri/tauri.dev.conf.json"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.1",

@@ -62,6 +62,20 @@ npx tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
 
 Native rule tests: `rustc --edition 2021 --test src-tauri/src/rules.rs -o rules-test && ./rules-test`
 
+### Togami Dev (test build)
+
+A separate app for trying things out without consequences:
+
+```bash
+npx tauri build --config src-tauri/tauri.dev.conf.json   # add the cross-compile flags above on Linux
+```
+
+- Installs as **Togami Dev** next to Togami, with its own icon (DEV badge), app ID and data, so your real ledger, streak and settings are untouched.
+- Never updates itself and isn't part of releases.
+- Quitting is instant with no lockout, debt, streak reset or ledger entry. Pausing takes effect immediately, and closing it mid-session isn't a quit.
+- Has the test bench: clock speed (10×, 60×), +1/+5 min skips, simulated blocked attempts, and buttons that fire each jingle with its notification.
+- Blocking is real.
+
 ### Releasing
 
 Bump the version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`, then push a tag:

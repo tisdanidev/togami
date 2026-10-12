@@ -300,6 +300,12 @@ export function requestPause(state, now) {
   const v = sessionView(state, now);
   if (!s || v.pause !== 'none') return [];
   if (v.phase.kind !== 'focus') return [{ type: 'error', message: 'You can only pause during focus time.' }];
+  if (state.dev) {
+    // dev build: pause takes effect straight away
+    s.pausedAt = now;
+    s.pauses++;
+    return [{ type: 'paused' }];
+  }
   if (v.remaining <= RULES.pauseWaitMs) return [{ type: 'error', message: 'Less than 2 minutes left. Finish this block first.' }];
   s.pauseRequestedAt = now;
   return [{ type: 'pauseRequested' }];
@@ -322,6 +328,11 @@ export function resume(state, now) {
 export function quit(state, { reason = '', usePardon = false, forced = false } = {}, now) {
   const s = state.session;
   if (!s) return [];
+  if (state.dev) {
+    // dev build: quitting just ends the session, with no penalty and no ledger entry
+    state.session = null;
+    return [{ type: 'quit', entry: { id: s.id, type: 'quit', at: now, forced, dev: true } }];
+  }
   const cost = quitCost(state, now);
   const v = sessionView(state, now);
   const planned = s.plan.filter((p) => p.kind === 'focus').reduce((a, p) => a + p.ms, 0);
@@ -382,7 +393,7 @@ export function recordAttempt(state, target, now) {
 
 /** The app was closed during a session: treat it as a quit. */
 export function checkClosedGap(state, lastSeenReal, nowReal, now) {
-  if (!state.session || !lastSeenReal) return [];
+  if (state.dev || !state.session || !lastSeenReal) return [];
   if (nowReal - lastSeenReal < RULES.closedGapMs) return [];
   return quit(state, { reason: 'Togami was closed during the session', forced: true }, now);
 }

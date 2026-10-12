@@ -214,3 +214,22 @@ test('timer fields are clamped to their limits', () => {
   assert.equal(E.clampField('longBreakMin', -3, 10), 0);
   assert.equal(E.clampField('cycles', 2.6, 1), 3);
 });
+
+test('dev build: instant pause, free quit, closing is not a quit', () => {
+  const s = fresh();
+  s.dev = true;
+  s.streak = 3;
+  E.start(s, {}, T0);
+  E.requestPause(s, T0 + MIN);
+  assert.equal(E.sessionView(s, T0 + MIN).pause, 'paused');
+  assert.equal(E.isBlocked(s, 'youtube.com', T0 + MIN), false);
+  E.resume(s, T0 + 2 * MIN);
+  assert.deepEqual(E.checkClosedGap(s, 1000, 1000 + 10 * MIN, T0 + 3 * MIN), []);
+  assert.ok(s.session);
+  E.quit(s, { reason: 'testing' }, T0 + 4 * MIN);
+  assert.equal(s.session, null);
+  assert.equal(s.lockout, null);
+  assert.equal(s.debtMs, 0);
+  assert.equal(s.streak, 3);
+  assert.equal(s.ledger.length, 0);
+});

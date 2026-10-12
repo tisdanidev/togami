@@ -9,6 +9,8 @@
 
 const T = globalThis.__TAURI__;
 export const isNative = Boolean(T);
+/** "Togami Dev": the test build (tauri.dev.conf.json opens index.html?flavor=dev). */
+export const isDev = isNative && new URLSearchParams(location.search).get('flavor') === 'dev';
 
 // ---------- blocker ----------
 
@@ -80,7 +82,7 @@ export function notify(title, body) {
 // ---------- updates ----------
 
 export const updater = {
-  available: isNative,
+  available: isNative && !isDev, // the dev build never updates itself
   version: () => (isNative ? T.core.invoke('app_version') : Promise.resolve('')),
   /** Resolves to { version, notes } when a newer release exists, else null. */
   check: () => T.core.invoke('update_check'),
