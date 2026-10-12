@@ -1,5 +1,6 @@
-# Push a tag like v0.2.0 to build Togami on Windows and publish a GitHub
-# release. The release includes latest.json and a signed installer, which is
+# Build Togami on Windows and publish a GitHub release, either by pushing a
+# tag like v0.2.0 or with "Run workflow" on the Actions tab (the release and
+# its v<version> tag are then created from the version in tauri.conf.json). The release includes latest.json and a signed installer, which is
 # what installed copies of Togami check to update themselves.
 #
 # Needs one repository secret: TAURI_SIGNING_PRIVATE_KEY (the updater key).
@@ -8,6 +9,7 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -45,8 +47,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: Togami ${{ github.ref_name }}
+          tagName: v__VERSION__
+          releaseName: Togami v__VERSION__
           releaseBody: |
             Download **Togami_*_x64-setup.exe** below and run it. Windows may show "Windows protected your PC" because the app isn't code-signed yet: click **More info → Run anyway**.
 
