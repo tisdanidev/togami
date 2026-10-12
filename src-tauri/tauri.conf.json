@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Togami",
+  "version": "0.2.0",
+  "identifier": "dev.tisdani.togami",
+  "build": {
+    "frontendDist": "../app"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Togami",
+        "width": 1120,
+        "height": 760,
+        "minWidth": 760,
+        "minHeight": 560,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "shortDescription": "Focus timer and distraction blocker",
+    "longDescription": "Togami blocks distracting apps and sites while you study, and makes quitting a session cost something.",
+    "copyright": "\u00a9 2026 tisdanidev",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEZCNjlCQzdGQkIwOUIzRTIKUldUaXN3bTdmN3hwKzF4UEgxVmswZ05iNXhFVnlKVmFJSnBBOE1tUmpOUmxVdm56OUpVMlJIcWYK",
+      "endpoints": [
+        "https://github.com/tisdanidev/togami/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}
