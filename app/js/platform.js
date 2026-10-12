@@ -2,7 +2,7 @@
 // call the native code in src-tauri/; in the browser test build everything is
 // simulated so the app can be tried without Windows.
 //   blocker  -> native thread watches the foreground window, closes blocked
-//               apps, minimises browsers showing blocked sites
+//               apps, closes browser tabs on blocked sites (Chrome, Edge, Firefox)
 //   media    -> Windows media controls (Spotify, browsers and other players)
 //   window   -> F11 full screen
 //   notify / updater -> Windows notifications, self-update from GitHub releases
@@ -33,6 +33,8 @@ export const blocker = {
     blockerListeners.add(fn);
     return () => blockerListeners.delete(fn);
   },
+  /** Togami Dev: what the native watcher last saw in front ({ exe, title, url, target }). */
+  seen: () => (isNative ? T.core.invoke('blocker_seen').catch(() => null) : Promise.resolve(null)),
   /** Test bench: pretend the user opened an app or site. */
   simulate(target, kind) {
     for (const fn of blockerListeners) fn({ target, kind });

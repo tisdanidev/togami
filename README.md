@@ -41,7 +41,7 @@ The browser version simulates Windows. Its **Test bench** button (bottom right) 
 The desktop app is a [Tauri](https://tauri.app) shell around `app/` with native code in `src-tauri/`:
 
 - **App blocking:** a background thread checks the foreground window every 0.4 s. A blocked app gets a close request and is minimised; Togami comes to the front with its block screen.
-- **Website blocking:** Togami reads the address bar of the browser in front (Chrome, Edge, Firefox, Brave, Opera, Vivaldi and others) through Windows UI Automation, so every page and subdomain of a blocked site counts (`youtube.com/watch...`, `m.youtube.com`). Landing on one shows a Windows notification and gives you **5 seconds to close the tab**; after that the browser is minimised and Togami shows its block screen. Coming back to the same site within 30 seconds gets no new grace period. If the address can't be read, the window title is used instead.
+- **Website blocking:** works in Chrome, Edge and Firefox. A tab counts as a blocked site if its address (read from the browser's address bar through Windows UI Automation: any page or subdomain, e.g. `youtube.com/watch...`, `m.youtube.com`) or its title names the site ("Funny cats - YouTube"). Landing on one shows a Windows notification and gives you **5 seconds to close the tab**; after that Togami closes it (Ctrl+W, which also stops a playing video) and shows its block screen. Coming back to the same site within 30 seconds gets no new grace period.
 - **Never touched:** Windows Explorer, Task Manager, Settings, the Start menu and Togami itself.
 - **Now playing:** Windows' system media controls (Spotify, browsers, Apple Music, Media Player and others), with album art and play/pause/skip.
 - **Full screen** with F11. Data is kept in the app's WebView storage under `%LOCALAPPDATA%\dev.tisdani.togami`.
@@ -88,7 +88,8 @@ Or run the **Release** workflow from the Actions tab: it tags `v<version>` itsel
 
 ### Known limits
 
-- Site blocking reads the browser's address bar. For a browser whose address bar can't be read, it falls back to window titles, which can miss pages that don't name the site.
+- Site blocking is tested against Chrome, Edge and Firefox. In other browsers it relies on window titles, which can miss pages that don't name the site.
+- Togami Dev's test bench shows what the blocker sees in front (program, title, address), which helps when a site slips through.
 - Blocking only applies while Togami is running. Closing it mid-session counts as quitting.
 
 ## Layout

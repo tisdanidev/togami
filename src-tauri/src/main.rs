@@ -15,6 +15,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(blocker::Shared::default())
+        .manage(blocker::LastSeen::default())
         .manage(system::PendingUpdate::default())
         .setup(|app| {
             blocker::start(app.handle().clone());
@@ -22,6 +23,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             blocker::blocker_sync,
+            blocker::blocker_seen,
             media::media_now,
             media::media_control,
             system::notify,

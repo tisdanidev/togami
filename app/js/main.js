@@ -1203,6 +1203,17 @@ if (!isNative || isDev) {
   });
 }
 
+// Togami Dev: live readout of what the blocker sees in front
+if (isDev) {
+  setInterval(async () => {
+    const el = $('#seen');
+    if (!el || bench.hidden) return;
+    const s = await blocker.seen();
+    if (!s) return;
+    el.innerHTML = `<b>${esc(s.exe)}</b> · ${esc(s.title || '(no title)')}<br>address: ${esc(s.url ?? '(not read)')}<br>${s.target ? `<span style="color:var(--neg)">blocked as ${esc(s.target)}</span>` : 'not blocked'}`;
+  }, 1000);
+}
+
 function renderBench() {
   if ((isNative && !isDev) || bench.hidden) return;
   const sp = clock.getSpeed();
@@ -1214,6 +1225,7 @@ function renderBench() {
       <button class="btn" type="button" data-act="skip" data-v="1">+1 min</button>
       <button class="btn" type="button" data-act="skip" data-v="5">+5 min</button>
     </div></div>
+    ${isDev ? `<div><h3 style="margin-bottom:6px">Blocker sees</h3><p class="seen" id="seen">Start a session, then switch to another window.</p></div>` : ''}
     <div><h3 style="margin-bottom:6px">Try to open</h3><div class="row">
       ${['Discord', 'Steam', 'youtube.com', 'reddit.com', 'docs.google.com'].map((x) => `<button class="btn" type="button" data-act="sim" data-v="${x}">${x}</button>`).join('')}
     </div></div>
