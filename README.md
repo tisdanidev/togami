@@ -70,7 +70,7 @@ Bump the version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.
 git tag v0.2.1 && git push origin v0.2.1
 ```
 
-`.github/workflows/release.yml` builds on Windows, runs the tests, signs the update with the `TAURI_SIGNING_PRIVATE_KEY` repository secret and publishes the release with `latest.json`. Installed copies pick it up automatically. Keep the private key safe: without it, existing installs can't receive updates.
+Or run the **Release** workflow from the Actions tab: it tags `v<version>` itself. `.github/workflows/release.yml` builds on Windows, runs the tests, signs the update with the `TAURI_SIGNING_PRIVATE_KEY` repository secret and publishes the release with `latest.json`. Installed copies pick it up automatically. Keep the private key safe: without it, existing installs can't receive updates.
 
 ### Known limits
 
