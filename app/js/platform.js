@@ -4,7 +4,7 @@
 //   blocker  -> native thread watches the foreground window, closes blocked
 //               apps, minimises browsers showing blocked sites
 //   media    -> Windows media controls (Spotify, browsers and other players)
-//   window   -> full screen during sessions
+//   window   -> F11 full screen
 
 const T = globalThis.__TAURI__;
 export const isNative = Boolean(T);
@@ -45,17 +45,18 @@ if (isNative) {
 // ---------- window ----------
 
 export const appWindow = {
-  /** Full screen while a session runs. */
-  async setFullscreen(on) {
+  /** F11: full screen on or off. Never switched on automatically. */
+  async toggleFullscreen() {
     try {
       if (isNative) {
-        await T.window.getCurrentWindow().setFullscreen(on);
+        const w = T.window.getCurrentWindow();
+        await w.setFullscreen(!(await w.isFullscreen()));
         return;
       }
-      if (on && !document.fullscreenElement) await document.documentElement.requestFullscreen?.();
-      if (!on && document.fullscreenElement) await document.exitFullscreen?.();
+      if (document.fullscreenElement) await document.exitFullscreen?.();
+      else await document.documentElement.requestFullscreen?.();
     } catch {
-      // refused (no user gesture, or not allowed here): the in-app full-screen view still shows
+      // not allowed here (e.g. inside an embedded preview)
     }
   },
 };

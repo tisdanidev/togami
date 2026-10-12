@@ -5,7 +5,7 @@ A focus timer and distraction blocker for students. Pick a session type, say wha
 ## Features
 
 - **Session types.** Pomodoro-style plans you can edit: focus length, break, long break and number of blocks. Ships with Essay (50/10 ×3), Revision (25/5 ×4) and Deep work (90/20 ×2), plus **Custom**, set with steppers right on the Focus page.
-- **Full-screen sessions.** A running session takes over the window: a red tint with just the timer and your intention during focus, a green tint with the time left and the music player during breaks, and a neutral tint while paused.
+- **Session screen.** A running session takes over the window: a red tint with the timer, your intention and the music player during focus, a green tint with the time left and the music player during breaks, and a neutral tint while paused. Press **F11** for full screen.
 - **Sidebar.** Notion-style navigation on the left with the status and a mini music player. Hide it with the button or Ctrl+\\.
 - **Blocking.** Apps and websites per session type, plus an always-allowed list. Windows, Settings, Task Manager and Togami are never blocked. Breaks are unblocked unless you turn on *Block during breaks*.
 - **Pausing.** Press Pause and blocking keeps running for 2 more minutes, then stops for up to 10 minutes. Only during focus time.
@@ -39,16 +39,16 @@ The browser version simulates Windows. Its **Test bench** button (bottom right) 
 The desktop app is a [Tauri](https://tauri.app) shell around `app/` with native code in `src-tauri/`:
 
 - **App blocking:** a background thread checks the foreground window every 0.4 s. A blocked app gets a close request and is minimised; Togami comes to the front with its block screen.
-- **Website blocking:** browsers (Chrome, Edge, Firefox, Brave, Opera, Vivaldi and others) are matched by their window title, e.g. "Funny cats - YouTube - Google Chrome". A match minimises the browser.
+- **Website blocking:** Togami reads the address bar of the browser in front (Chrome, Edge, Firefox, Brave, Opera, Vivaldi and others) through Windows UI Automation, so every page and subdomain of a blocked site counts (`youtube.com/watch...`, `m.youtube.com`). Landing on one shows a Windows notification and gives you **5 seconds to close the tab**; after that the browser is minimised and Togami shows its block screen. Coming back to the same site within 30 seconds gets no new grace period. If the address can't be read, the window title is used instead.
 - **Never touched:** Windows Explorer, Task Manager, Settings, the Start menu and Togami itself.
 - **Now playing:** Windows' system media controls (Spotify, browsers, Apple Music, Media Player and others), with album art and play/pause/skip.
-- **Full screen** during sessions. Data is kept in the app's WebView storage under `%LOCALAPPDATA%\dev.tisdani.togami`.
+- **Full screen** with F11. Data is kept in the app's WebView storage under `%LOCALAPPDATA%\dev.tisdani.togami`.
 
 Build on Windows (needs [Rust](https://rustup.rs) and Node):
 
 ```bash
 npm install
-npx tauri build          # src-tauri/target/release/bundle/nsis/Togami_0.1.0_x64-setup.exe
+npx tauri build          # src-tauri/target/release/bundle/nsis/Togami_0.1.1_x64-setup.exe
 ```
 
 Cross-compile from Linux (needs `nsis`, `clang`, `lld` and `cargo install cargo-xwin`):
@@ -62,7 +62,7 @@ Native rule tests: `rustc --edition 2021 --test src-tauri/src/rules.rs -o rules-
 
 ### Known limits
 
-- Site blocking reads window titles, so a site whose title doesn't name it can slip through, and a page that mentions a blocked site's name in its title gets blocked. A browser extension is the planned fix.
+- Site blocking reads the browser's address bar. For a browser whose address bar can't be read, it falls back to window titles, which can miss pages that don't name the site.
 - Blocking only applies while Togami is running. Closing it mid-session counts as quitting.
 
 ## Layout

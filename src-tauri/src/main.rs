@@ -10,6 +10,7 @@ mod rules;
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .manage(blocker::Shared::default())
         .setup(|app| {
             blocker::start(app.handle().clone());

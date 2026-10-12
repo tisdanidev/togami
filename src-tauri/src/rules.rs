@@ -56,8 +56,49 @@ fn extra_hit(key: &str, page: &str) -> bool {
     }
 }
 
-/// Which blocklist entry (if any) the foreground window matches.
-pub fn match_target(apps: &[String], sites: &[String], exe: &str, title: &str) -> Option<(String, &'static str)> {
+pub fn is_browser(exe: &str) -> bool {
+    let e = norm(exe);
+    BROWSERS.iter().any(|b| e == *b)
+}
+
+/// Host of whatever is in a browser's address bar, if it looks like a web address.
+/// "youtube.com/watch?v=1" / "https://www.YouTube.com/" -> "youtube.com"
+pub fn url_host(url: &str) -> Option<String> {
+    let s = url.trim().to_lowercase();
+    if s.is_empty() || s.contains(' ') {
+        return None; // empty, or a search being typed
+    }
+    let s = match s.find("://") {
+        Some(i) => &s[i + 3..],
+        None => &s[..],
+    };
+    let host = s.split(['/', '?', '#']).next()?;
+    let host = host.rsplit('@').next()?; // user@host
+    let host = host.split(':').next()?; // host:port
+    let host = host.trim_start_matches("www.").trim_end_matches('.');
+    if !host.contains('.') || host.starts_with('.') {
+        return None;
+    }
+    Some(host.to_string())
+}
+
+/// "https://www.youtube.com/feed" -> "youtube.com"
+fn site_domain(site: &str) -> String {
+    url_host(site).unwrap_or_default()
+}
+
+/// The blocked site a URL belongs to: same domain or any subdomain, any page.
+pub fn match_url(sites: &[String], url: &str) -> Option<String> {
+    let host = url_host(url)?;
+    sites.iter().find(|site| {
+        let d = site_domain(site);
+        !d.is_empty() && (host == d || host.ends_with(&format!(".{d}")))
+    }).cloned()
+}
+
+/// Which blocklist entry (if any) the foreground window matches. `url` is the
+/// browser's address bar when it could be read; otherwise the title is used.
+pub fn match_target(apps: &[String], sites: &[String], exe: &str, title: &str, url: Option<&str>) -> Option<(String, &'static str)> {
     let exe_n = norm(exe);
     if exe_n.is_empty() || NEVER.contains(&exe_n.as_str()) {
         return None;
@@ -69,6 +110,10 @@ pub fn match_target(apps: &[String], sites: &[String], exe: &str, title: &str) -
         }
     }
     if BROWSERS.iter().any(|b| exe_n == *b) {
+        // a readable address decides on its own; titles are only the fallback
+        if let Some(u) = url.filter(|u| url_host(u).is_some()) {
+            return match_url(sites, u).map(|s| (s, "site"));
+        }
         let page = page_title(title);
         for site in sites {
             let k = site_key(site);
@@ -134,7 +179,49 @@ mod tests {
     }
 
     fn m(c: &Cfg, exe: &str, title: &str) -> Option<(String, &'static str)> {
-        match_target(&c.apps, &c.sites, exe, title)
+        match_target(&c.apps, &c.sites, exe, title, None)
+    }
+
+    fn mu(c: &Cfg, exe: &str, title: &str, url: &str) -> Option<(String, &'static str)> {
+        match_target(&c.apps, &c.sites, exe, title, Some(url))
+    }
+
+    #[test]
+    fn any_page_of_a_blocked_site_is_blocked() {
+        let c = cfg();
+        for url in [
+            "youtube.com",
+            "youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://www.youtube.com/feed/subscriptions",
+            "m.youtube.com/shorts/abc",
+            "music.youtube.com",
+            "www.reddit.com/r/learnprogramming/comments/1",
+            "x.com/someone/status/1",
+            "https://user@tiktok.com:443/@creator/video/9",
+        ] {
+            assert!(mu(&c, "chrome", "Whatever - Google Chrome", url).is_some(), "{url}");
+        }
+    }
+
+    #[test]
+    fn a_readable_address_overrides_the_title() {
+        let c = cfg();
+        // a doc that mentions YouTube in its title is not YouTube
+        assert!(mu(&c, "chrome", "My essay about YouTube - Google Docs - Google Chrome", "docs.google.com/document/d/1").is_none());
+        // lookalike domains are not the blocked site
+        assert!(mu(&c, "msedge", "x", "notyoutube.com/watch").is_none());
+        assert!(mu(&c, "msedge", "x", "box.com").is_none());
+        assert!(mu(&c, "msedge", "x", "youtube.com.evil.example").is_none());
+        // while a search is being typed, fall back to the title
+        assert!(mu(&c, "chrome", "Funny cats - YouTube - Google Chrome", "funny cats").is_some());
+    }
+
+    #[test]
+    fn url_hosts() {
+        assert_eq!(url_host("https://www.YouTube.com/watch?v=1").as_deref(), Some("youtube.com"));
+        assert_eq!(url_host("localhost:5173").as_deref(), None);
+        assert_eq!(url_host("cats and dogs").as_deref(), None);
+        assert_eq!(url_host("about:blank").as_deref(), None);
     }
 
     #[test]

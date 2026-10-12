@@ -1,7 +1,7 @@
 {
   "name": "togami",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A focus timer and distraction blocker for students.",
   "type": "module",
   "scripts": {

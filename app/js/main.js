@@ -104,7 +104,6 @@ function handle(events, { closed = false } = {}) {
     switch (e.type) {
       case 'complete':
         overlay = { type: 'complete', entry: e.entry, pardon: false };
-        appWindow.setFullscreen(false);
         glint();
         break;
       case 'pardonEarned':
@@ -118,11 +117,7 @@ function handle(events, { closed = false } = {}) {
         toast('Lockout over. Blocks are off.');
         break;
       case 'quit':
-        appWindow.setFullscreen(false);
         if (closed || e.entry.forced) toast(v.closedQuit, 'neg');
-        break;
-      case 'emergency':
-        appWindow.setFullscreen(false);
         break;
       case 'error':
         toast(e.message, 'neg');
@@ -259,7 +254,8 @@ function renderZen(t) {
       <div class="z-label">${sv.phase.kind === 'long' ? 'Long break' : 'Break'}</div>
       <div class="z-timer" data-live="timer"></div>
       <div class="z-np" data-np="full"></div>
-      <div class="z-bottom"><button class="z-btn" type="button" data-act="quit">Quit session</button></div>`;
+      <div class="z-bottom"><button class="z-btn" type="button" data-act="quit">Quit session</button></div>
+      <div class="z-hint">F11 full screen</div>`;
     return;
   }
   let pause = '';
@@ -273,10 +269,12 @@ function renderZen(t) {
     <div class="z-timer" data-live="timer"></div>
     ${s.intention ? `<p class="z-intent">${esc(s.intention)}</p>` : ''}
     ${pause}
+    <div class="z-np z-np-quiet" data-np="full"></div>
     <div class="z-bottom">
       ${sv.pause === 'none' ? `<button class="z-btn" type="button" data-act="pause" ${sv.remaining > E.RULES.pauseWaitMs ? '' : 'disabled'}>Pause</button>` : ''}
       <button class="z-btn" type="button" data-act="quit">Quit</button>
-    </div>`;
+    </div>
+    <div class="z-hint">F11 full screen</div>`;
 }
 
 // ----- blocklist -----
@@ -668,8 +666,9 @@ function fillNowPlaying() {
 
 function fillSlot(slot, size) {
   const tr = nowPlaying;
+  const base = (slot.dataset.base ??= slot.className); // keep the slot's own layout classes
   if (!tr) {
-    slot.className = `np ${size} empty`;
+    slot.className = `${base} np ${size} empty`;
     slot.innerHTML = 'Nothing playing';
     delete slot.dataset.k;
     return;
@@ -677,7 +676,7 @@ function fillSlot(slot, size) {
   const key = `${tr.title}|${tr.artist}|${tr.playing}|${tr.art ? 1 : 0}`;
   if (slot.dataset.k !== key) {
     slot.dataset.k = key;
-    slot.className = `np ${size}`;
+    slot.className = `${base} np ${size}`;
     const hue = [...tr.title].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 7);
     const btn = (act, label, path) => `<button type="button" data-act="${act}" aria-label="${label}"><svg viewBox="0 0 16 16"><path d="${path}"/></svg></button>`;
     const play = tr.playing ? btn('mToggle', 'Pause', 'M4 3h3v10H4zM9 3h3v10H9z') : btn('mToggle', 'Play', 'M4 2.5v11L13 8z');
@@ -700,11 +699,15 @@ function fillSlot(slot, size) {
 
 // ---------- blocking ----------
 
-blocker.onAttempt(({ target }) => {
+// stage "warn": the user landed on a blocked site and has 5 seconds to close the
+// tab (the native side shows a Windows notification); count it, show nothing.
+// stage "block": the window was pushed away; show the block screen.
+blocker.onAttempt(({ target, stage = 'block', warned = false }) => {
   const t = now();
   if (E.isBlocked(state, target, t)) {
-    E.recordAttempt(state, target, t);
+    if (!warned) E.recordAttempt(state, target, t);
     commit();
+    if (stage === 'warn') return;
     overlay = { type: 'block', target };
     renderOverlay();
     updateLive(t);
@@ -749,7 +752,6 @@ document.addEventListener('click', (ev) => {
       const ev2 = E.start(state, { intention: intentionDraft }, t);
       if (ev2[0]?.type === 'started') {
         intentionDraft = '';
-        appWindow.setFullscreen(true);
         if (ev2[0].debtMs) toast(`${fmtMin(ev2[0].debtMs)} of debt added to this block.`, 'neg');
       }
       handle(ev2);
@@ -910,6 +912,11 @@ document.addEventListener('input', (ev) => {
 });
 
 document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'F11') {
+    ev.preventDefault();
+    appWindow.toggleFullscreen();
+    return;
+  }
   if ((ev.ctrlKey || ev.metaKey) && ev.key === '\\') {
     ev.preventDefault();
     $('[data-act="sidebar"]').click();

@@ -307,7 +307,10 @@ button, input, select { font: inherit; color: inherit; }
 .zen .z-btn:hover { background: color-mix(in srgb, var(--zfg) 8%, transparent); color: var(--zfg); }
 .zen .z-btn:disabled { opacity: .4; cursor: not-allowed; background: transparent; }
 .zen .z-btn.strong { color: var(--zfg); background: color-mix(in srgb, var(--zfg) 8%, transparent); }
+.zen .z-hint { position: absolute; top: max(18px, env(safe-area-inset-top, 0px)); right: 22px; font: 400 11px var(--mono); color: var(--zmuted); opacity: .55; }
 .zen .z-np { margin-top: 34px; width: min(420px, 100%); }
+.zen .z-np-quiet { margin-top: 48px; width: min(380px, 100%); opacity: .8; transition: opacity .2s; }
+.zen .z-np-quiet:hover, .zen .z-np-quiet:focus-within { opacity: 1; }
 .zen .np { background: color-mix(in srgb, var(--surface) 55%, transparent); border-color: color-mix(in srgb, var(--zfg) 12%, transparent); }
 .zen .np .a, .zen .np.empty { color: var(--zmuted); }
 
