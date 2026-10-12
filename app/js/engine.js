@@ -27,7 +27,7 @@ export function defaultState() {
     ],
     profileId: 'essay',
     allowlist: ['docs.google.com', 'Calculator'],
-    settings: { voice: 'neutral', theme: 'system', blockBreaks: false, sidebar: true },
+    settings: { voice: 'neutral', theme: 'system', blockBreaks: false, sidebar: true, sounds: true, notify: true },
     session: null,
     lockout: null, // { until, ledgerId }
     debtMs: 0,

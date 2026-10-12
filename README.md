@@ -21,6 +21,8 @@ A focus timer and distraction blocker for students. Pick a session type, say wha
 - **Emergency unlock.** Once a week, end the session or lockout immediately with no penalty.
 - **Ledger.** Weekly focus time, finished sessions, streak, what you tried to open, and the full history.
 - **Now playing.** The current track with play/pause/skip.
+- **Jingles and notifications.** A short chime when focus starts, a break starts, a break ends and the session finishes (one at a time), plus a Windows notification when Togami isn't in front. Both can be turned off in Settings.
+- **Automatic updates.** Installed copies check GitHub releases on launch and every few hours, and offer *Restart and update* when no session or lockout is running.
 - **Voices.** Neutral, or *Heir*: cold and superior.
 
 ## Run it
@@ -48,7 +50,7 @@ Build on Windows (needs [Rust](https://rustup.rs) and Node):
 
 ```bash
 npm install
-npx tauri build          # src-tauri/target/release/bundle/nsis/Togami_0.1.1_x64-setup.exe
+npx tauri build          # src-tauri/target/release/bundle/nsis/Togami_0.2.0_x64-setup.exe
 ```
 
 Cross-compile from Linux (needs `nsis`, `clang`, `lld` and `cargo install cargo-xwin`):
@@ -59,6 +61,16 @@ npx tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
 ```
 
 Native rule tests: `rustc --edition 2021 --test src-tauri/src/rules.rs -o rules-test && ./rules-test`
+
+### Releasing
+
+Bump the version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`, then push a tag:
+
+```bash
+git tag v0.2.1 && git push origin v0.2.1
+```
+
+`.github/workflows/release.yml` builds on Windows, runs the tests, signs the update with the `TAURI_SIGNING_PRIVATE_KEY` repository secret and publishes the release with `latest.json`. Installed copies pick it up automatically. Keep the private key safe: without it, existing installs can't receive updates.
 
 ### Known limits
 
@@ -71,7 +83,8 @@ Native rule tests: `rustc --edition 2021 --test src-tauri/src/rules.rs -o rules-
 | --- | --- |
 | `app/js/engine.js` | All session, pause, penalty and ledger rules. Pure functions, tested in `test/engine.test.js` |
 | `app/js/platform.js` | Bridge to the native code (blocking, media, full screen); simulated in the browser |
-| `src-tauri/` | Windows app: `blocker.rs` (foreground window watcher), `media.rs` (now playing), `rules.rs` (matching rules, tested) |
+| `src-tauri/` | Windows app: `blocker.rs` (foreground window watcher), `media.rs` (now playing), `system.rs` (notifications, updates), `rules.rs` (matching rules, tested) |
+| `app/js/sounds.js` | The four jingles, synthesised with Web Audio |
 | `app/fonts/` | Bundled Newsreader and IBM Plex (SIL Open Font License) |
 | `app/js/main.js` | UI |
 | `app/js/voice.js` | Copy for the Neutral and Heir voices |

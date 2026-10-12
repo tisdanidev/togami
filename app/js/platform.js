@@ -5,6 +5,7 @@
 //               apps, minimises browsers showing blocked sites
 //   media    -> Windows media controls (Spotify, browsers and other players)
 //   window   -> F11 full screen
+//   notify / updater -> Windows notifications, self-update from GitHub releases
 
 const T = globalThis.__TAURI__;
 export const isNative = Boolean(T);
@@ -59,6 +60,32 @@ export const appWindow = {
       // not allowed here (e.g. inside an embedded preview)
     }
   },
+};
+
+// ---------- notifications ----------
+
+/** A Windows notification (desktop app) or a browser notification if allowed. */
+export function notify(title, body) {
+  if (isNative) {
+    T.core.invoke('notify', { title, body }).catch(() => {});
+    return;
+  }
+  try {
+    if (globalThis.Notification?.permission === 'granted') new Notification(title, { body });
+  } catch {
+    // not allowed here
+  }
+}
+
+// ---------- updates ----------
+
+export const updater = {
+  available: isNative,
+  version: () => (isNative ? T.core.invoke('app_version') : Promise.resolve('')),
+  /** Resolves to { version, notes } when a newer release exists, else null. */
+  check: () => T.core.invoke('update_check'),
+  /** Downloads, installs and restarts Togami. */
+  install: () => T.core.invoke('update_install'),
 };
 
 // ---------- media ----------

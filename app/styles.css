@@ -164,6 +164,8 @@ button, input, select { font: inherit; color: inherit; }
 .sb-nav a:hover { background: var(--hover); color: var(--fg); }
 .sb-nav a[aria-current='page'] { background: var(--hover); color: var(--fg); font-weight: 500; }
 .sb-foot { margin-top: auto; display: flex; flex-direction: column; gap: 10px; }
+.sb-update { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 2px; padding: 8px 10px; border-radius: 7px; background: var(--accent-wash); color: var(--accent); font-size: 12.5px; }
+.sb-update a { color: var(--accent); font-weight: 500; }
 .sb-status { display: flex; align-items: center; gap: 8px; padding: 0 10px; font: 500 12px var(--mono); color: var(--muted); }
 .sb-status .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
 .sb-status.lock { color: var(--neg); }

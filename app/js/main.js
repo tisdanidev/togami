@@ -3,7 +3,8 @@
 import * as E from './engine.js';
 import * as store from './store.js';
 import * as clock from './clock.js';
-import { blocker, media, appWindow, isNative } from './platform.js';
+import { blocker, media, appWindow, notify, updater, isNative } from './platform.js';
+import * as sounds from './sounds.js';
 import { voice, QUIT_PHRASE } from './voice.js';
 import { clock as fmtClock, fmtMin, fmtHours, fmtDate, fmtTime, esc } from './format.js';
 import { seedSamples, clearSamples, hasSamples } from './samples.js';
@@ -35,6 +36,10 @@ let lastMode = '';
 let lastSeenWrite = 0;
 let nowPlaying = null;
 let mobileSidebar = false;
+let appVersion = '';
+let updateInfo = null; // { version, notes } once a newer version is found
+let updateState = 'idle'; // idle | checking | none | installing | error
+let updateError = '';
 
 function now() {
   return clock.now();
@@ -125,8 +130,32 @@ function handle(events, { closed = false } = {}) {
     }
   }
   if (overlay && overlay.type === 'quit' && !state.session) overlay = null;
+  announce(events);
   commit();
   render();
+}
+
+/** One jingle (and notification) for the latest session moment in `events`. */
+function announce(events) {
+  let moment = null;
+  let detail = null;
+  for (const e of events) {
+    if (e.type === 'started') moment = 'workStart';
+    if (e.type === 'phase') moment = e.kind === 'focus' ? 'breakEnd' : 'breakStart';
+    if (e.type === 'complete') (moment = 'sessionEnd'), (detail = e.entry);
+  }
+  if (!moment) return;
+  if (state.settings.sounds) sounds.play(moment);
+  if (!state.settings.notify || (document.hasFocus() && !document.hidden)) return;
+  const sv = state.session && E.sessionView(state, now());
+  const intention = state.session?.intention;
+  const msg = {
+    workStart: ['Focus started', `${fmtMin(sv?.remaining ?? 0)}${intention ? ` on ${intention}` : ''}. Blocks are on.`],
+    breakStart: [sv?.phase.kind === 'long' ? 'Long break' : 'Break time', `${fmtMin(sv?.remaining ?? 0)} off. Blocks are off until it ends.`],
+    breakEnd: ['Break over', `Back to focus for ${fmtMin(sv?.remaining ?? 0)}. Blocks are back on.`],
+    sessionEnd: ['Session complete', `${fmtMin(detail?.focusMs ?? 0)} of focus. Nicely done.`],
+  }[moment];
+  notify(msg[0], msg[1]);
 }
 
 // ---------- rendering ----------
@@ -154,6 +183,7 @@ function render() {
   const input = $('#intention');
   if (input) input.value = intentionDraft;
   renderZen(t);
+  renderUpdateLine();
   fillNowPlaying();
   renderOverlay();
   renderBench();
@@ -442,6 +472,27 @@ function viewSettings(t) {
       <p class="muted small" style="margin-top:10px">Block screen preview: <i style="font-family:var(--serif);font-size:15px;color:var(--fg)">${esc(sampleVoice.blockTitle('Discord'))}</i></p>
     </div>
     <div class="section">
+      <h2>Sounds and notifications</h2>
+      <div class="toggle-row">
+        <div class="lbl"><b>Jingles</b><span>A short sound when focus starts, a break starts, a break ends and the session finishes.</span></div>
+        <label class="switch"><input type="checkbox" id="setSounds" ${state.settings.sounds ? 'checked' : ''} aria-label="Jingles" /><i></i></label>
+      </div>
+      <div class="actions" style="justify-content:flex-start;margin:-4px 0 6px">
+        ${[['workStart', 'Focus starts'], ['breakStart', 'Break starts'], ['breakEnd', 'Break ends'], ['sessionEnd', 'Session done']].map(([k, l]) => `<button class="btn quiet" type="button" data-act="preview" data-v="${k}">▶ ${l}</button>`).join('')}
+      </div>
+      <div class="toggle-row">
+        <div class="lbl"><b>Windows notifications</b><span>The same moments, shown as a notification while Togami isn't in front.</span></div>
+        <label class="switch"><input type="checkbox" id="setNotify" ${state.settings.notify ? 'checked' : ''} aria-label="Windows notifications" /><i></i></label>
+      </div>
+    </div>
+    ${updater.available ? `<div class="section">
+      <h2>Updates</h2>
+      <div class="toggle-row">
+        <div class="lbl"><b>Togami ${esc(appVersion)}</b><span id="updText">${esc(updateText())}</span></div>
+        ${updateInfo ? `<button class="btn primary" type="button" data-act="updInstall" ${E.isLocked(state, t) ? 'disabled title="Finish the session or lockout first"' : ''}>Restart and update</button>` : `<button class="btn" type="button" data-act="updCheck">Check now</button>`}
+      </div>
+    </div>` : ''}
+    <div class="section">
       <h2>Appearance</h2>
       <div class="seg" role="group" aria-label="Theme">
         ${['system', 'light', 'dark'].map((x) => `<button type="button" data-act="theme" data-v="${x}" aria-pressed="${state.settings.theme === x}">${x[0].toUpperCase() + x.slice(1)}</button>`).join('')}
@@ -718,12 +769,31 @@ blocker.onAttempt(({ target, stage = 'block', warned = false }) => {
 
 // ---------- actions ----------
 
+document.addEventListener('pointerdown', sounds.unlock, { passive: true });
+document.addEventListener('keydown', sounds.unlock, { passive: true });
+
 document.addEventListener('click', (ev) => {
   const btn = ev.target.closest('[data-act]');
   if (!btn || btn.disabled) return;
   const act = btn.dataset.act;
   const t = now();
   switch (act) {
+    case 'preview':
+      sounds.play(btn.dataset.v);
+      break;
+    case 'updCheck':
+      checkForUpdate(true);
+      break;
+    case 'updInstall':
+      if (E.isLocked(state, t)) return;
+      updateState = 'installing';
+      render();
+      updater.install().catch((err) => {
+        updateState = 'error';
+        updateError = String(err);
+        render();
+      });
+      break;
     case 'sidebar':
       if (narrowMq.matches) mobileSidebar = !mobileSidebar;
       else {
@@ -963,6 +1033,11 @@ document.addEventListener('submit', (ev) => {
 
 document.addEventListener('change', (ev) => {
   const el = ev.target;
+  if (el.id === 'setSounds' || el.id === 'setNotify') {
+    state.settings[el.id === 'setSounds' ? 'sounds' : 'notify'] = el.checked;
+    commit();
+    return;
+  }
   if (E.isLocked(state, now())) return;
   if (el.id === 'blockBreaks') {
     state.settings.blockBreaks = el.checked;
@@ -1021,6 +1096,50 @@ function bindHold() {
   });
   btn.addEventListener('keyup', stop);
   btn.addEventListener('blur', stop);
+}
+
+// ---------- updates (desktop app) ----------
+
+function updateText() {
+  if (updateState === 'installing') return 'Downloading the update. Togami restarts when it is installed.';
+  if (updateState === 'error') return `Update failed: ${updateError}`;
+  if (updateInfo) return `Version ${updateInfo.version} is ready to install.`;
+  if (updateState === 'checking') return 'Checking for updates…';
+  if (updateState === 'none') return 'You have the latest version.';
+  return 'Updates are checked when Togami starts and every few hours.';
+}
+
+async function checkForUpdate(manual = false) {
+  if (!updater.available || updateState === 'installing') return;
+  updateState = 'checking';
+  if (manual) render();
+  try {
+    updateInfo = await updater.check();
+    updateState = updateInfo ? 'idle' : 'none';
+  } catch (err) {
+    updateState = manual ? 'error' : 'idle';
+    updateError = String(err);
+  }
+  renderUpdateLine();
+  if (route === 'settings') render();
+}
+
+/** Small "update ready" line in the sidebar. Hidden while a session or lockout runs. */
+function renderUpdateLine() {
+  const el = $('#updLine');
+  if (!el) return;
+  const show = updateInfo && !E.isLocked(state, now());
+  el.hidden = !show;
+  if (show) el.innerHTML = `<span>Update ${esc(updateInfo.version)} ready</span><a href="#settings">Install</a>`;
+}
+
+if (updater.available) {
+  updater.version().then((v) => {
+    appVersion = v;
+    if (route === 'settings') render();
+  });
+  setTimeout(checkForUpdate, 8000);
+  setInterval(checkForUpdate, 6 * 60 * 60 * 1000);
 }
 
 // ---------- misc ----------
