@@ -33,15 +33,27 @@ fn site_key(site: &str) -> String {
     }
 }
 
-/// "Funny cats - YouTube - Google Chrome" -> "funny cats - youtube"
+/// Window title -> page title, for each supported browser:
+///   Chrome:  "Funny cats - YouTube - Google Chrome"   -> "funny cats - youtube"
+///   Firefox: "Funny cats - YouTube — Mozilla Firefox" -> "funny cats - youtube"
+///   Edge:    "Funny cats - YouTube and 3 more pages - Personal - Microsoft\u{200b} Edge"
+///            -> "funny cats - youtube - personal"
 fn page_title(title: &str) -> String {
-    let t = title.to_lowercase();
-    for sep in [" - ", " — ", " – "] {
-        if let Some(i) = t.rfind(sep) {
-            let tail = &t[i + sep.len()..];
-            if BROWSER_NAMES.iter().any(|b| tail.trim() == *b || tail.contains(b)) {
-                return t[..i].trim().to_string();
-            }
+    let mut t: String = title.chars().filter(|c| !matches!(c, '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{feff}')).collect::<String>().to_lowercase();
+    // cut at the last separator of any kind (Firefox uses "—", Chrome and Edge "-")
+    if let Some((i, sep)) = [" - ", " — ", " – "].iter().filter_map(|sep| t.rfind(sep).map(|i| (i, *sep))).max_by_key(|(i, _)| *i) {
+        let tail = &t[i + sep.len()..];
+        if BROWSER_NAMES.iter().any(|b| tail.trim() == *b || tail.contains(b)) {
+            t.truncate(i);
+        }
+    }
+    // Edge adds "and N more page(s)" after the tab title when a window has several tabs
+    if let Some(i) = t.find(" and ") {
+        let rest = &t[i + 5..];
+        let digits = rest.chars().take_while(|c| c.is_ascii_digit()).count();
+        if digits > 0 && rest[digits..].starts_with(" more page") {
+            let end = rest[digits..].find(" - ").map(|j| i + 5 + digits + j).unwrap_or(t.len());
+            t.replace_range(i..end, "");
         }
     }
     t.trim().to_string()
@@ -110,30 +122,50 @@ pub fn match_target(apps: &[String], sites: &[String], exe: &str, title: &str, u
         }
     }
     if BROWSERS.iter().any(|b| exe_n == *b) {
-        // a readable address decides on its own; titles are only the fallback
-        if let Some(u) = url.filter(|u| url_host(u).is_some()) {
-            return match_url(sites, u).map(|s| (s, "site"));
+        // either signal is enough: the address bar (any page or subdomain of a
+        // blocked site) or the tab title naming the site
+        if let Some(site) = url.and_then(|u| match_url(sites, u)) {
+            return Some((site, "site"));
         }
-        let page = page_title(title);
-        for site in sites {
-            let k = site_key(site);
-            if k.is_empty() {
-                continue;
-            }
-            let hit = if k.len() >= 3 {
-                page.contains(&k) || extra_hit(&k, &page)
-            } else if extra_hit(&k, &page) {
-                true
-            } else {
-                // short names like x.com: match "... / X" or a bare "X"
-                page == k || page.ends_with(&format!(" / {k}")) || page.ends_with(&format!(" - {k}"))
-            };
-            if hit {
-                return Some((site.clone(), "site"));
-            }
+        if let Some(site) = match_title(sites, title) {
+            return Some((site, "site"));
         }
     }
     None
+}
+
+/// Separators sites use between page name and site name in titles.
+const TITLE_SEPS: &[&str] = &[" - ", " | ", " • ", " — ", " – ", " · ", " : "];
+
+/// The blocked site a browser tab title names. Sites put their name at the
+/// start or end of the title ("Funny cats - YouTube", "Reddit - Dive into
+/// anything", "user • Instagram photos and videos"); a page that only mentions
+/// a site in the middle ("My essay about YouTube - Google Docs") doesn't count.
+pub fn match_title(sites: &[String], title: &str) -> Option<String> {
+    let page = page_title(title);
+    let page = page.trim_start_matches(|c: char| c == '(' || c.is_ascii_digit() || c == ')' || c == ' '); // "(3) YouTube"
+    let mut parts: Vec<&str> = vec![page];
+    for sep in TITLE_SEPS {
+        parts = parts.iter().flat_map(|p| p.split(sep)).collect();
+    }
+    let parts: Vec<&str> = parts.into_iter().map(str::trim).filter(|p| !p.is_empty()).collect();
+    let last = parts.last().copied().unwrap_or("");
+    sites.iter().find(|site| {
+        let k = site_key(site);
+        if k.is_empty() {
+            return false;
+        }
+        if extra_hit(&k, page) || page == k {
+            return true;
+        }
+        if k.len() < 3 {
+            // short names like x.com: only an exact last part ("Home / X")
+            return last == k || page.ends_with(&format!(" / {k}"));
+        }
+        // a part of the title that is the site's name ("YouTube") or starts with
+        // it ("Instagram photos and videos"); the last part may also end with it
+        parts.iter().any(|p| *p == k || p.starts_with(&format!("{k} "))) || (parts.len() > 1 && last.ends_with(&format!(" {k}")))
+    }).cloned()
 }
 
 /// "Spotify.exe" / "MSEdge" / "SpotifyAB.SpotifyMusic_...!Spotify" -> a readable name
@@ -204,16 +236,69 @@ mod tests {
     }
 
     #[test]
-    fn a_readable_address_overrides_the_title() {
+    fn address_or_title_is_enough() {
         let c = cfg();
+        // address bar read correctly
+        assert!(mu(&c, "chrome", "Whatever - Google Chrome", "youtube.com/watch?v=abc").is_some());
+        // address bar read wrong (a page's search box) but the title names YouTube
+        assert!(mu(&c, "chrome", "Lofi beats to study to - YouTube - Google Chrome", "").is_some());
+        assert!(mu(&c, "chrome", "(3) Funny cats - YouTube - Google Chrome", "minecraft").is_some());
+        assert!(mu(&c, "msedge", "Funny cats - YouTube and 3 more pages - Personal - Microsoft\u{200b} Edge", "").is_some());
         // a doc that mentions YouTube in its title is not YouTube
         assert!(mu(&c, "chrome", "My essay about YouTube - Google Docs - Google Chrome", "docs.google.com/document/d/1").is_none());
         // lookalike domains are not the blocked site
-        assert!(mu(&c, "msedge", "x", "notyoutube.com/watch").is_none());
-        assert!(mu(&c, "msedge", "x", "box.com").is_none());
-        assert!(mu(&c, "msedge", "x", "youtube.com.evil.example").is_none());
-        // while a search is being typed, fall back to the title
-        assert!(mu(&c, "chrome", "Funny cats - YouTube - Google Chrome", "funny cats").is_some());
+        assert!(mu(&c, "msedge", "Not You Tube", "notyoutube.com/watch").is_none());
+        assert!(mu(&c, "msedge", "Box", "box.com").is_none());
+        assert!(mu(&c, "msedge", "Example", "youtube.com.evil.example").is_none());
+    }
+
+    #[test]
+    fn chrome_firefox_and_edge_titles() {
+        let c = cfg();
+        // a YouTube video, as each browser titles its window (address bar unreadable)
+        for (exe, title) in [
+            ("chrome", "Lofi beats to study to - YouTube - Google Chrome"),
+            ("firefox", "Lofi beats to study to - YouTube — Mozilla Firefox"),
+            ("msedge", "Lofi beats to study to - YouTube - Microsoft\u{200b} Edge"),
+            ("msedge", "Lofi beats to study to - YouTube and 3 more pages - Personal - Microsoft\u{200b} Edge"),
+            ("msedge", "Lofi beats to study to - YouTube and 1 more page - Work - Microsoft\u{200b} Edge"),
+        ] {
+            assert_eq!(m(&c, exe, title).map(|h| h.0).as_deref(), Some("youtube.com"), "{exe}: {title}");
+        }
+        // a Google Doc about YouTube, in each browser
+        for (exe, title) in [
+            ("chrome", "My essay about YouTube - Google Docs - Google Chrome"),
+            ("firefox", "My essay about YouTube - Google Docs — Mozilla Firefox"),
+            ("msedge", "My essay about YouTube - Google Docs and 2 more pages - Personal - Microsoft\u{200b} Edge"),
+        ] {
+            assert!(m(&c, exe, title).is_none(), "{exe}: {title}");
+        }
+        // address bar values as each browser shows them
+        for (exe, url) in [("chrome", "youtube.com/watch?v=abc"), ("msedge", "https://www.youtube.com/watch?v=abc"), ("firefox", "https://www.youtube.com/watch?v=abc")] {
+            assert!(mu(&c, exe, "x", url).is_some(), "{exe}: {url}");
+        }
+    }
+
+    #[test]
+    fn site_names_in_titles() {
+        let sites: Vec<String> = ["youtube.com", "instagram.com", "reddit.com", "tiktok.com", "twitch.tv", "x.com"].iter().map(|s| s.to_string()).collect();
+        for t in [
+            "YouTube",
+            "Funny cats - YouTube",
+            "creator • Instagram photos and videos",
+            "Instagram",
+            "Reddit - Dive into anything",
+            "r/learnprogramming",
+            "What's your setup? : r/battlestations",
+            "TikTok - Make Your Day",
+            "streamer - Twitch",
+            "Home / X",
+        ] {
+            assert!(match_title(&sites, t).is_some(), "{t}");
+        }
+        for t in ["My essay about YouTube - Google Docs", "Why Reddit changed its API | The Verge", "Inbox (3) - Gmail", "Excel boxes"] {
+            assert!(match_title(&sites, t).is_none(), "{t}");
+        }
     }
 
     #[test]

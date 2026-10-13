@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Togami Dev",
+  "mainBinaryName": "togami-dev",
+  "identifier": "dev.tisdani.togami.dev",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Togami Dev",
+        "width": 1120,
+        "height": 760,
+        "minWidth": 760,
+        "minHeight": 560,
+        "center": true,
+        "url": "index.html?flavor=dev"
+      }
+    ]
+  },
+  "bundle": {
+    "createUpdaterArtifacts": false,
+    "icon": [
+      "icons-dev/32x32.png",
+      "icons-dev/128x128.png",
+      "icons-dev/128x128@2x.png",
+      "icons-dev/icon.ico"
+    ],
+    "shortDescription": "Togami test build"
+  }
+}

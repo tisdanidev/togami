@@ -2,13 +2,15 @@
 // call the native code in src-tauri/; in the browser test build everything is
 // simulated so the app can be tried without Windows.
 //   blocker  -> native thread watches the foreground window, closes blocked
-//               apps, minimises browsers showing blocked sites
+//               apps, closes browser tabs on blocked sites (Chrome, Edge, Firefox)
 //   media    -> Windows media controls (Spotify, browsers and other players)
 //   window   -> F11 full screen
 //   notify / updater -> Windows notifications, self-update from GitHub releases
 
 const T = globalThis.__TAURI__;
 export const isNative = Boolean(T);
+/** "Togami Dev": the test build (tauri.dev.conf.json opens index.html?flavor=dev). */
+export const isDev = isNative && new URLSearchParams(location.search).get('flavor') === 'dev';
 
 // ---------- blocker ----------
 
@@ -31,6 +33,8 @@ export const blocker = {
     blockerListeners.add(fn);
     return () => blockerListeners.delete(fn);
   },
+  /** Togami Dev: what the native watcher last saw in front ({ exe, title, url, target }). */
+  seen: () => (isNative ? T.core.invoke('blocker_seen').catch(() => null) : Promise.resolve(null)),
   /** Test bench: pretend the user opened an app or site. */
   simulate(target, kind) {
     for (const fn of blockerListeners) fn({ target, kind });
@@ -80,7 +84,7 @@ export function notify(title, body) {
 // ---------- updates ----------
 
 export const updater = {
-  available: isNative,
+  available: isNative && !isDev, // the dev build never updates itself
   version: () => (isNative ? T.core.invoke('app_version') : Promise.resolve('')),
   /** Resolves to { version, notes } when a newer release exists, else null. */
   check: () => T.core.invoke('update_check'),

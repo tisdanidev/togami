@@ -140,6 +140,8 @@ button, input, select { font: inherit; color: inherit; }
 .mark-b { fill: var(--accent); opacity: .62; }
 .mark-knot { fill: var(--fg); }
 .brand .word { font: 500 18px/1 var(--serif); letter-spacing: .005em; }
+.dev-badge { font: 600 10px/1 var(--mono); letter-spacing: .08em; color: #fff; background: #d9772b; padding: 3px 5px; border-radius: 4px; }
+body.dev .zen .z-hint::before { content: 'DEV · '; color: #d9772b; font-weight: 600; }
 .brand::after { /* glasses glint, played on completion */
   content: ''; position: absolute; top: 0; bottom: 0; left: -40%; width: 30%;
   background: linear-gradient(100deg, transparent, rgba(255, 255, 255, .85), transparent);
@@ -470,6 +472,7 @@ td .note.neg { color: var(--neg); }
 }
 .bench h3 { margin: 0; font: 500 12px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .bench p { margin: 0; color: var(--muted); }
+.bench .seen { font: 400 12px/1.5 var(--mono); word-break: break-word; }
 .bench .row { display: flex; flex-wrap: wrap; gap: 6px; }
 .bench .btn { height: 30px; padding: 0 10px; font-size: 13px; }
 .bench .btn[aria-pressed='true'] { background: var(--accent-wash); border-color: var(--accent); color: var(--accent); }
