@@ -208,7 +208,8 @@ async function say(moment, vars = {}) {
   card.classList.add('chatter');
   for (let i = 1; i <= line.t.length; i++) {
     if (speaking !== me) return;
-    text.textContent = line.t.slice(0, i);
+    // the untyped rest stays laid out (hidden) so centred text doesn't shift
+    text.innerHTML = `<span>${esc(line.t.slice(0, i))}<span class="rest">${esc(line.t.slice(i))}</span></span>`;
     await wait(/[.,!?]/.test(line.t[i - 1]) ? TYPE_MS * 6 : TYPE_MS);
   }
   card.classList.remove('chatter');
