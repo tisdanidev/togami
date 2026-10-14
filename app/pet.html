@@ -5,25 +5,42 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Togami pet</title>
 <style>
-  /* The desktop pet, in a Persona 5 style cut-in: the character sits in a
-     slanted red card; when it speaks, a striped band slashes in behind it and
-     a jagged speech box with a ransom-note name tag pops up. The window is
-     transparent and lets clicks through everywhere but the card, box and menu. */
+  /* The desktop pet, styled after Persona 5's dialogue: the character sits in
+     a slanted red card on the left; when it speaks, a striped band slashes in
+     behind it and the P5 dialogue box opens to its right: a dark wedge with a
+     lightning-bolt point aimed at the speaker, a white name strip rising at
+     -14.65 degrees in the original (about -21 here, since the box is drawn
+     taller; the speaker's name in black with one or more letters
+     inverted) and a white triangle on the far end. White text inside.
+     Persona 5 Royal sets dialogue in Optima Nova Black (the original release
+     used KoreanKRSM). Neither can ship with Togami, so the real font is used
+     when it's installed and Proza Libre ExtraBold, the closest open font, otherwise.
+     The window is transparent and lets clicks through everywhere but the
+     card, box and menu. */
+  @font-face {
+    font-family: 'P5 Text';
+    font-weight: 800;
+    font-display: block;
+    src: local('Optima Nova LT Black'), local('OptimaNovaLT-Black'), local('Optima nova LT Black'),
+      url(fonts/ProzaLibre-normal-800-latin.woff2) format('woff2');
+  }
   :root {
     --red: #e3141b;
     --red-deep: #9e0a10;
     --ink: #0b0b0b;
+    --box: #262626;
     --paper: #fbfbf6;
+    --p5: 'P5 Text', 'Optima Nova LT', Optima, Candara, sans-serif;
   }
   html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; -webkit-user-select: none; }
-  body { font-family: 'Segoe UI', system-ui, sans-serif; }
+  body { font-family: var(--p5); font-weight: 800; }
   #stage { position: absolute; inset: 0; }
   [hidden] { display: none !important; }
 
   /* ---- the card ---- */
   .card {
-    position: absolute; right: 16px; bottom: 14px; width: 250px; height: 182px;
-    transform: rotate(-3deg); transform-origin: 70% 80%; cursor: grab;
+    position: absolute; left: 12px; bottom: 14px; width: 226px; height: 164px;
+    transform: rotate(-3deg); transform-origin: 30% 80%; cursor: grab;
     filter: drop-shadow(4px 5px 0 rgba(0, 0, 0, .35));
   }
   .card:active { cursor: grabbing; }
@@ -43,12 +60,12 @@
   .flip .sprite { scale: -1 1; }
   @keyframes breathe { 50% { transform: translateY(-2px) scaleY(1.012); } }
   .chatter .sprite { animation: chatter .26s ease-in-out infinite alternate; }
-  @keyframes chatter { from { transform: translateY(0) rotate(0); } to { transform: translateY(-4px) rotate(-1.2deg); } }
+  @keyframes chatter { from { transform: translateY(0) rotate(0); } to { transform: translateY(-4px) rotate(1.2deg); } }
 
   .card.pop { animation: pop .42s cubic-bezier(.2, 1.6, .4, 1); }
   @keyframes pop {
-    0% { transform: rotate(-3deg) translateX(46px) scale(.86); }
-    60% { transform: rotate(-5deg) translateX(-6px) scale(1.04); }
+    0% { transform: rotate(-3deg) translateX(-46px) scale(.86); }
+    60% { transform: rotate(-1deg) translateX(6px) scale(1.04); }
     100% { transform: rotate(-3deg); }
   }
   .card.wiggle { animation: wiggle .35s ease-in-out; }
@@ -56,51 +73,41 @@
 
   /* ---- the slash band behind the card ---- */
   .band {
-    position: absolute; right: -30px; bottom: 54px; width: 560px; height: 64px; pointer-events: none;
-    transform: rotate(-11deg) scaleX(0); transform-origin: 100% 50%; opacity: 0;
+    position: absolute; left: -30px; bottom: 50px; width: 640px; height: 64px; pointer-events: none;
+    transform: rotate(-11deg) scaleX(0); transform-origin: 0 50%; opacity: 0;
     background:
-      repeating-linear-gradient(105deg, transparent 0 34px, rgba(0, 0, 0, .9) 34px 46px),
+      repeating-linear-gradient(75deg, transparent 0 34px, rgba(0, 0, 0, .9) 34px 46px),
       linear-gradient(var(--red), var(--red));
-    clip-path: polygon(0 30%, 100% 0, 100% 100%, 4% 78%);
+    clip-path: polygon(0 0, 100% 30%, 96% 78%, 0 100%);
     transition: transform .28s cubic-bezier(.2, .9, .3, 1), opacity .18s;
   }
   .band.on { transform: rotate(-11deg) scaleX(1); opacity: 1; }
   .band.b2 {
-    bottom: 28px; height: 26px; width: 520px; transition-delay: .05s;
-    background: var(--ink); clip-path: polygon(0 40%, 100% 0, 100% 100%, 2% 70%);
+    bottom: 24px; height: 26px; width: 600px; transition-delay: .05s;
+    background: var(--ink); clip-path: polygon(0 0, 100% 40%, 98% 70%, 0 100%);
   }
 
-  /* ---- speech box ---- */
-  .bubble { position: absolute; left: 8px; bottom: 168px; width: 300px; transform: rotate(-2deg); transform-origin: 80% 100%; }
+  /* ---- P5 dialogue box ---- */
+  .bubble { position: absolute; left: 196px; bottom: 104px; width: 356px; height: 164px; transform-origin: 0 80%; }
   .bubble.show { animation: bubble .3s cubic-bezier(.2, 1.4, .4, 1); }
-  @keyframes bubble { from { transform: rotate(-8deg) scale(.6); opacity: 0; } }
-  .bubble .shape { position: relative; }
-  .bubble .shape::before, .bubble .shape::after, .bubble .shape > i {
-    content: ''; position: absolute; inset: 0;
-    clip-path: polygon(0 12%, 95% 0, 100% 80%, 88% 82%, 93% 100%, 76% 84%, 4% 100%);
+  @keyframes bubble { from { transform: translateX(-30px) rotate(6deg) scale(.5); opacity: 0; } }
+  .bubble svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .bubble .name {
+    position: absolute; left: 17%; top: 27.5%; transform: rotate(-21deg); transform-origin: 0 100%;
+    color: var(--ink); font-size: 18px; line-height: 1; white-space: pre; letter-spacing: .3px;
   }
-  .bubble .shape::before { background: var(--red); transform: translate(8px, 7px); }
-  .bubble .shape::after { background: var(--paper); }
-  .bubble .shape > i { inset: 4px; z-index: 1; background: var(--ink); }
+  .bubble .name b { display: inline-block; font-weight: inherit; background: var(--ink); color: #fff; padding: 2px 3px 3px; margin: -2px 1px 0; }
   .bubble p {
-    position: relative; z-index: 2; margin: 0; padding: 24px 30px 34px 24px; min-height: 22px;
-    color: #fff; font-size: 15px; font-weight: 650; line-height: 1.35; letter-spacing: .1px;
+    position: absolute; left: 17%; right: 21%; top: 44%; margin: 0;
+    color: #fff; font-size: 15px; line-height: 1.3; letter-spacing: .2px;
   }
-  .tag { position: absolute; z-index: 2; left: 14px; top: -14px; display: flex; gap: 1px; transform: rotate(-6deg); }
-  .tag span {
-    display: inline-block; padding: 1px 5px 2px; font: 900 15px/1.1 'Arial Black', Impact, sans-serif;
-    border: 2px solid var(--ink); box-shadow: 2px 2px 0 var(--red);
-  }
-  .tag span:nth-child(odd) { background: var(--paper); color: var(--ink); }
-  .tag span:nth-child(even) { background: var(--ink); color: var(--paper); border-color: var(--paper); }
-  .tag span:nth-child(3n) { background: var(--red); color: #fff; }
 
   /* ---- right-click menu ---- */
-  .menu { position: absolute; left: 30px; bottom: 22px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+  .menu { position: absolute; left: 226px; bottom: 26px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
   .menu.show { animation: bubble .22s cubic-bezier(.2, 1.4, .4, 1); }
   .menu button {
     all: unset; cursor: pointer; padding: 6px 18px 7px 14px; transform: skewX(-12deg);
-    background: var(--ink); color: #fff; font: 900 14px/1 'Arial Black', Impact, sans-serif; letter-spacing: .5px; text-transform: uppercase;
+    background: var(--ink); color: #fff; font: 800 15px/1 var(--p5); letter-spacing: .4px;
     box-shadow: 4px 4px 0 var(--red); border: 2px solid var(--paper); transition: transform .1s, background .1s;
   }
   .menu button:nth-child(2) { margin-left: 12px; }
@@ -115,8 +122,17 @@
     <div class="band" id="band"></div>
     <div class="band b2" id="band2"></div>
     <div class="bubble" id="bubble" hidden>
-      <div class="tag" id="tag"></div>
-      <div class="shape"><i></i><p id="text" aria-live="polite"></p></div>
+      <!-- traced from the P5 dialogue box (950 x 284) -->
+      <svg viewBox="0 0 950 284" preserveAspectRatio="none" aria-hidden="true">
+        <g stroke-linejoin="miter" stroke-miterlimit="10">
+          <polygon points="128,128 828,70 860,276 166,236 140,250 98,206 74,218 58,192 2,166 74,150" fill="none" stroke="#0b0b0b" stroke-width="20" />
+          <polygon points="128,128 828,70 860,276 166,236 140,250 98,206 74,218 58,192 2,166 74,150" fill="#262626" stroke="#fbfbf6" stroke-width="6" />
+          <polygon points="68,104 440,4 478,52 134,130 96,128 112,112" fill="#fbfbf6" stroke="#0b0b0b" stroke-width="9" />
+          <polygon points="870,110 946,180 742,246" fill="#fbfbf6" stroke="#0b0b0b" stroke-width="9" />
+        </g>
+      </svg>
+      <div class="name" id="name"></div>
+      <p id="text" aria-live="polite"></p>
     </div>
     <div class="card" id="card" hidden>
       <div class="edge"></div>

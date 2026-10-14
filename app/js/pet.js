@@ -108,9 +108,7 @@ async function boot() {
     return; // no pack installed: nothing to show
   }
   await preload();
-  $('#tag').innerHTML = [...(pack.name || 'Pet').toUpperCase()]
-    .map((ch, i) => `<span style="transform:rotate(${((i * 37) % 13) - 6}deg)">${ch === ' ' ? '&nbsp;' : esc(ch)}</span>`)
-    .join('');
+  $('#name').innerHTML = nameHtml(pack.name || 'Pet');
   card.classList.toggle('flip', flipped);
   show(idleName(), false);
   card.hidden = false;
@@ -316,6 +314,17 @@ function sendHit() {
   if (key === lastHit) return;
   lastHit = key;
   host.hit(rects);
+}
+
+/** The speaker's name as P5 draws it: black, with one letter (two from 8
+ *  letters, three from 16) inverted, white on a black block. */
+function nameHtml(name) {
+  const chars = [...name];
+  const slots = chars.map((c, i) => i).filter((i) => chars[i].trim());
+  const count = chars.length >= 16 ? 3 : chars.length >= 8 ? 2 : 1;
+  const inv = new Set();
+  while (inv.size < Math.min(count, slots.length)) inv.add(slots[Math.floor(Math.random() * slots.length)]);
+  return chars.map((c, i) => (inv.has(i) ? `<b>${esc(c)}</b>` : esc(c))).join('');
 }
 
 function esc(s) {

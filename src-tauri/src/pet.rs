@@ -14,7 +14,7 @@ use tauri::ipc::{InvokeBody, Request};
 use tauri::{AppHandle, Manager, PhysicalPosition, State, WebviewUrl, WebviewWindowBuilder};
 
 const LABEL: &str = "pet";
-const WIDTH: f64 = 470.0;
+const WIDTH: f64 = 560.0;
 const HEIGHT: f64 = 340.0;
 const MAX_PACK_BYTES: u64 = 64 * 1024 * 1024;
 
