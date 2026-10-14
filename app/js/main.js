@@ -3,7 +3,7 @@
 import * as E from './engine.js';
 import * as store from './store.js';
 import * as clock from './clock.js';
-import { blocker, media, appWindow, notify, updater, isNative, isDev } from './platform.js';
+import { blocker, media, appWindow, notify, updater, pet, background, isNative, isDev } from './platform.js';
 import * as sounds from './sounds.js';
 import { voice, QUIT_PHRASE } from './voice.js';
 import { clock as fmtClock, fmtMin, fmtHours, fmtDate, fmtTime, esc } from './format.js';
@@ -46,6 +46,10 @@ let appVersion = '';
 let updateInfo = null; // { version, notes } once a newer version is found
 let updateState = 'idle'; // idle | checking | none | installing | error
 let updateError = '';
+let petName = null; // name of the installed pet pack
+let petBusy = ''; // pet pack import or removal message
+let lastNudge = Date.now(); // when the pet last spoke up on its own
+let lastLate = 0;
 
 function now() {
   return clock.now();
@@ -107,6 +111,7 @@ function loop() {
     renderOverlay();
   }
   updateLive(t);
+  sendPetState(t);
 }
 
 function handle(events, { closed = false } = {}) {
@@ -120,15 +125,24 @@ function handle(events, { closed = false } = {}) {
       case 'pardonEarned':
         if (overlay?.type === 'complete') overlay.pardon = true;
         else toast(v.pardonEarned, 'gold');
+        petSay('pardon');
+        break;
+      case 'pauseRequested':
+      case 'paused':
+        petSay(e.type);
         break;
       case 'resumed':
         if (e.auto) toast('The pause ran out. Blocking is back on.');
+        petSay('resumed');
         break;
       case 'lockoutEnded':
         toast('Lockout over. Blocks are off.');
+        petSay('lockoutEnded');
         break;
       case 'quit':
         if (closed || e.entry.forced) toast(v.closedQuit, 'neg');
+        if (state.lockout) petSay('lockout', { min: Math.ceil((state.lockout.until - now()) / 60_000) });
+        else petSay('quit');
         break;
       case 'error':
         toast(e.message, 'neg');
@@ -152,9 +166,10 @@ function announce(events) {
   }
   if (!moment) return;
   if (state.settings.sounds) sounds.play(moment);
-  if (!state.settings.notify || (document.hasFocus() && !document.hidden)) return;
   const sv = state.session && E.sessionView(state, now());
   const intention = state.session?.intention;
+  petSay(moment, { intention, min: sv ? Math.round(sv.remaining / 60_000) : null });
+  if (!state.settings.notify || (document.hasFocus() && !document.hidden)) return;
   const msg = {
     workStart: ['Focus started', `${fmtMin(sv?.remaining ?? 0)}${intention ? ` on ${intention}` : ''}. Blocks are on.`],
     breakStart: [sv?.phase.kind === 'long' ? 'Long break' : 'Break time', `${fmtMin(sv?.remaining ?? 0)} off. Blocks are off until it ends.`],
@@ -491,6 +506,19 @@ function viewSettings(t) {
         <label class="switch"><input type="checkbox" id="setNotify" ${state.settings.notify ? 'checked' : ''} aria-label="Windows notifications" /><i></i></label>
       </div>
     </div>
+    <div class="section">
+      <h2>Desktop pet</h2>
+      ${petName ? `<div class="toggle-row">
+        <div class="lbl"><b>Show ${esc(petName)}</b><span>Sits on your desktop and reacts to your sessions. Drag to move, right-click for options.</span></div>
+        <label class="switch"><input type="checkbox" id="setPet" ${state.settings.pet ? 'checked' : ''} aria-label="Show the desktop pet" /><i></i></label>
+      </div>` : `<p class="muted small" style="margin-top:0">${pet.canImport ? 'Import a pet pack (a .zip with pet.json and its frames) to get a character on your desktop that reacts to your sessions.' : 'Browser build: put an unzipped pet pack in the packs/current folder and reload.'}</p>`}
+      ${pet.canImport ? `<div class="pet-row">
+        <button class="btn" type="button" data-act="petImport">${petName ? 'Replace pet pack' : 'Import pet pack'}</button>
+        ${petName ? '<button class="btn quiet" type="button" data-act="petRemove">Remove pet</button>' : ''}
+        <span class="muted small" id="petMsg">${esc(petBusy)}</span>
+        <input type="file" id="petFile" accept=".zip,application/zip" hidden />
+      </div>` : ''}
+    </div>
     ${updater.available ? `<div class="section">
       <h2>Updates</h2>
       <div class="toggle-row">
@@ -512,7 +540,7 @@ function viewSettings(t) {
         <div class="row"><span class="k">Lockout</span><span>Blocks stay on after a quit: 10 min for the first quit in a week, 25 for the second, 45 after that.</span></div>
         <div class="row"><span class="k">Debt</span><span>Focus time you skip is added to your next session, up to 60 min.</span></div>
         <div class="row"><span class="k">Pardons</span><span>One for every 5 finished sessions, up to 3. A pardon cancels a quit's lockout and debt. The quit stays in the ledger.</span></div>
-        <div class="row"><span class="k">Closing</span><span>Closing Togami during a session counts as quitting.</span></div>
+        <div class="row"><span class="k">Closing</span><span>Closing the window keeps Togami running in the tray. Quitting it from the tray during a session counts as quitting.</span></div>
         <div class="row"><span class="k">Emergency</span><span>Once a week, end everything now with no penalty. ${em ? '<b>Available.</b>' : '<b>Used this week</b>, back on Monday.'}</span></div>
       </div>
     </div>
@@ -588,7 +616,7 @@ function renderOverlay() {
     return;
   }
   overlayEl.hidden = false;
-  const fn = { block: ovBlock, quit: ovQuit, complete: ovComplete, emergency: ovEmergency, reset: ovReset }[overlay.type];
+  const fn = { block: ovBlock, quit: ovQuit, complete: ovComplete, emergency: ovEmergency, reset: ovReset, exit: ovExit }[overlay.type];
   overlayEl.innerHTML = fn();
   const focusEl = overlayEl.querySelector('[autofocus]') || overlayEl.querySelector('button');
   focusEl?.focus({ preventScroll: true });
@@ -754,6 +782,16 @@ function fillSlot(slot, size) {
   if (bar) bar.style.width = tr.durationMs ? `${Math.min(100, (tr.positionMs / tr.durationMs) * 100)}%` : '100%';
 }
 
+function startSession(intention, profileId) {
+  const ev = E.start(state, { intention, profileId }, now());
+  if (ev[0]?.type === 'started') {
+    intentionDraft = '';
+    state.profileId = profileId;
+    if (ev[0].debtMs) toast(`${fmtMin(ev[0].debtMs)} of debt added to this block.`, 'neg');
+  }
+  handle(ev);
+}
+
 // ---------- blocking ----------
 
 // stage "warn": the user landed on a blocked site and has 5 seconds to close the
@@ -764,6 +802,7 @@ blocker.onAttempt(({ target, stage = 'block', warned = false }) => {
   if (E.isBlocked(state, target, t)) {
     if (!warned) E.recordAttempt(state, target, t);
     commit();
+    petSay(stage === 'warn' ? 'blockWarn' : 'block', { target });
     if (stage === 'warn') return;
     overlay = { type: 'block', target };
     renderOverlay();
@@ -825,12 +864,7 @@ document.addEventListener('click', (ev) => {
     }
     case 'start': {
       intentionDraft = $('#intention')?.value ?? intentionDraft;
-      const ev2 = E.start(state, { intention: intentionDraft }, t);
-      if (ev2[0]?.type === 'started') {
-        intentionDraft = '';
-        if (ev2[0].debtMs) toast(`${fmtMin(ev2[0].debtMs)} of debt added to this block.`, 'neg');
-      }
-      handle(ev2);
+      startSession(intentionDraft, state.profileId);
       break;
     }
     case 'pause':
@@ -854,6 +888,25 @@ document.addEventListener('click', (ev) => {
       }
       overlay = { type: 'quit', step: 1 };
       renderOverlay();
+      break;
+    case 'exitConfirm':
+      store.save(state);
+      background.exit();
+      break;
+    case 'petImport':
+      $('#petFile')?.click();
+      break;
+    case 'petRemove':
+      pet.remove().then(() => {
+        petName = null;
+        state.settings.pet = false;
+        commit();
+        render();
+        toast('Pet removed.');
+      }, (err) => toast(String(err), 'neg'));
+      break;
+    case 'petSay':
+      pet.say(btn.dataset.v, { target: 'youtube.com', intention: 'History essay', min: 25, version: '9.9.9' });
       break;
     case 'fire':
       sounds.play(btn.dataset.v);
@@ -1053,6 +1106,18 @@ document.addEventListener('change', (ev) => {
     commit();
     return;
   }
+  if (el.id === 'setPet') {
+    state.settings.pet = el.checked;
+    commit();
+    if (el.checked) showPet();
+    else pet.hide();
+    return;
+  }
+  if (el.id === 'petFile') {
+    const file = el.files?.[0];
+    if (file) importPet(file);
+    return;
+  }
   if (E.isLocked(state, now())) return;
   if (el.id === 'blockBreaks') {
     state.settings.blockBreaks = el.checked;
@@ -1129,8 +1194,10 @@ async function checkForUpdate(manual = false) {
   updateState = 'checking';
   if (manual) render();
   try {
+    const had = updateInfo?.version;
     updateInfo = await updater.check();
     updateState = updateInfo ? 'idle' : 'none';
+    if (updateInfo && updateInfo.version !== had) petSay('update', { version: updateInfo.version });
   } catch (err) {
     updateState = manual ? 'error' : 'idle';
     updateError = String(err);
@@ -1156,6 +1223,133 @@ if (updater.available) {
   setTimeout(checkForUpdate, 8000);
   setInterval(checkForUpdate, 6 * 60 * 60 * 1000);
 }
+
+// ---------- background (desktop app) ----------
+
+// the window may be hidden in the tray: the native heartbeat keeps the clock going
+background.onHeartbeat(() => loop());
+
+background.onTray((act) => {
+  if (act === 'pet') {
+    if (!petName) {
+      background.show();
+      location.hash = '#settings';
+      return;
+    }
+    state.settings.pet = !state.settings.pet;
+    commit();
+    if (state.settings.pet) showPet();
+    else pet.hide();
+    if (route === 'settings') render();
+  }
+  if (act === 'quit') {
+    // closing mid-session counts as quitting, so ask first
+    if (state.session && !state.dev) {
+      background.show();
+      overlay = { type: 'exit' };
+      renderOverlay();
+    } else background.exit();
+  }
+});
+
+function ovExit() {
+  return `<div class="modal" role="dialog" aria-labelledby="xt">
+    <h2 id="xt">Quit ${APP_NAME}?</h2>
+    <p>A session is running. Quitting ${APP_NAME} now counts as quitting the session: the lockout, debt and streak reset apply when it next starts.</p>
+    <p>Closing the window instead keeps the session going in the background.</p>
+    <div class="actions">
+      <button class="btn danger" type="button" data-act="exitConfirm">Quit anyway</button>
+      <button class="btn primary" type="button" data-act="close" autofocus>Keep running</button>
+    </div></div>`;
+}
+
+// ---------- desktop pet ----------
+
+/** Tell the pet about a moment, if it is on. */
+function petSay(moment, vars = {}) {
+  if (state.settings.pet && petName) pet.say(moment, vars);
+}
+
+function showPet() {
+  pet.show().catch((err) => {
+    state.settings.pet = false;
+    commit();
+    render();
+    toast(`The pet could not open: ${err}`, 'neg');
+  });
+}
+
+async function importPet(file) {
+  petBusy = 'Importing…';
+  render();
+  try {
+    petName = await pet.import(file);
+    petBusy = '';
+    state.settings.pet = true;
+    commit();
+    showPet();
+    toast(`${petName} is on your desktop.`);
+  } catch (err) {
+    petBusy = '';
+    toast(String(err), 'neg');
+  }
+  render();
+}
+
+pet.packName().then((name) => {
+  petName = name;
+  if (name && state.settings.pet) showPet();
+  if (route === 'settings') render();
+  renderBench();
+});
+
+pet.onAct(({ act, id }) => {
+  if (act === 'ready') {
+    lastPetState = ''; // the pet (re)loaded: send it the state again
+    sendPetState(now());
+    return;
+  }
+  if (act === 'start') {
+    if (!state.profiles.some((p) => p.id === id)) return;
+    startSession('', id);
+    return;
+  }
+  if (act !== 'hide') return;
+  state.settings.pet = false;
+  commit();
+  pet.hide();
+  if (route === 'settings') render();
+});
+
+/** What the pet shows: session types to start, or the running timer. */
+let lastPetState = '';
+function sendPetState(t) {
+  if (!state.settings.pet || !petName) return;
+  const sv = state.session && E.sessionView(state, t);
+  const s = {
+    locked: !state.session && E.isLocked(state, t),
+    lockoutMs: state.lockout && !state.session ? Math.max(0, state.lockout.until - t) : 0,
+    profiles: state.profiles.map((p) => ({ id: p.id, name: p.name, label: profileLabel(p) })),
+    session: sv ? { kind: sv.phase.kind, pause: sv.pause, remaining: Math.ceil(sv.remaining / 1000) * 1000 } : null,
+  };
+  const key = JSON.stringify(s);
+  if (key === lastPetState) return;
+  lastPetState = key;
+  pet.state(s);
+}
+
+// now and then, while no session runs, the pet speaks up
+setInterval(() => {
+  if (!state.settings.pet || !petName || state.session || E.isLocked(state, now())) return;
+  const h = new Date().getHours();
+  if (h < 5 && Date.now() - lastLate > 90 * 60_000) {
+    lastLate = lastNudge = Date.now();
+    petSay('late');
+  } else if (Date.now() - lastNudge > 30 * 60_000) {
+    lastNudge = Date.now();
+    petSay('idle');
+  }
+}, 60_000);
 
 // ---------- misc ----------
 
@@ -1232,6 +1426,9 @@ function renderBench() {
     <div><h3 style="margin-bottom:6px">Jingle and notification</h3><div class="row">
       ${[['workStart', 'Focus started'], ['breakStart', 'Break time'], ['breakEnd', 'Break over'], ['sessionEnd', 'Session complete']].map(([k, l]) => `<button class="btn" type="button" data-act="fire" data-v="${k}">${l}</button>`).join('')}
     </div></div>
+    ${petName ? `<div><h3 style="margin-bottom:6px">${esc(petName)} says</h3><div class="row">
+      ${['hello', 'workStart', 'breakStart', 'breakEnd', 'sessionEnd', 'blockWarn', 'block', 'pauseRequested', 'quit', 'lockout', 'pardon', 'update', 'idle', 'late'].map((m) => `<button class="btn" type="button" data-act="petSay" data-v="${m}">${m}</button>`).join('')}
+    </div></div>` : ''}
     ${isNative ? '' : `<div><h3 style="margin-bottom:6px">Other</h3><div class="row">
       <button class="btn" type="button" data-act="music" aria-pressed="${media.isEnabled()}">Sample music</button>
       <button class="btn" type="button" data-act="closeGap" ${state.session ? '' : 'disabled'}>Close Togami for 2 min</button>

@@ -12,6 +12,7 @@
         "height": 760,
         "minWidth": 760,
         "minHeight": 560,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,IntensiveWakeUpThrottling,CalculateNativeWinOcclusion --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows",
         "center": true,
         "url": "index.html?flavor=dev"
       }

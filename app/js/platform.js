@@ -6,6 +6,7 @@
 //   media    -> Windows media controls (Spotify, browsers and other players)
 //   window   -> F11 full screen
 //   notify / updater -> Windows notifications, self-update from GitHub releases
+//   pet      -> the desktop pet window (pet.html), from an imported pet pack
 
 const T = globalThis.__TAURI__;
 export const isNative = Boolean(T);
@@ -90,6 +91,114 @@ export const updater = {
   check: () => T.core.invoke('update_check'),
   /** Downloads, installs and restarts Togami. */
   install: () => T.core.invoke('update_install'),
+};
+
+// ---------- desktop pet ----------
+
+// Desktop app: pet.html runs in its own transparent, always-on-top window.
+// Browser build: it runs in an iframe in the corner of the page, and the pack
+// comes from the gitignored packs/current folder on the dev server.
+const petActs = new Set();
+let petFrame = null;
+let petRects = [];
+
+function browserPetFrame() {
+  if (petFrame) return petFrame;
+  petFrame = document.createElement('iframe');
+  petFrame.src = 'pet.html';
+  petFrame.title = 'Desktop pet';
+  petFrame.className = 'pet-frame';
+  petFrame.setAttribute('allowtransparency', 'true');
+  document.body.append(petFrame);
+  addEventListener('message', (e) => {
+    if (e.source !== petFrame.contentWindow) return;
+    if (e.data?.type === 'pet-hit') petRects = e.data.rects;
+    if (e.data?.type === 'pet-leave') petFrame.style.pointerEvents = 'none';
+    if (e.data?.type === 'pet-act') for (const fn of petActs) fn(e.data);
+  });
+  // the iframe only takes the pointer while it is over the pet
+  addEventListener('pointermove', (e) => {
+    const f = petFrame.getBoundingClientRect();
+    const x = e.clientX - f.left;
+    const y = e.clientY - f.top;
+    const over = !petFrame.hidden && petRects.some(([l, t, w, h]) => x >= l && y >= t && x < l + w && y < t + h);
+    if (over) petFrame.style.pointerEvents = 'auto';
+  });
+  return petFrame;
+}
+
+export const pet = {
+  /** Packs can be imported in the desktop app only. */
+  canImport: isNative,
+  /** Name of the installed pet pack, or null. */
+  async packName() {
+    if (isNative) return T.core.invoke('pet_has_pack').catch(() => null);
+    try {
+      const r = await fetch('packs/current/pet.json');
+      return r.ok ? (await r.json()).name || 'Pet' : null;
+    } catch {
+      return null;
+    }
+  },
+  show() {
+    if (!isNative) {
+      browserPetFrame().hidden = false;
+      return Promise.resolve();
+    }
+    let pos = null;
+    try {
+      pos = JSON.parse(localStorage.getItem('togami.pet.pos'));
+    } catch {}
+    return T.core.invoke('pet_show', { pos: Array.isArray(pos) ? pos : null });
+  },
+  hide() {
+    if (!isNative) {
+      if (petFrame) petFrame.hidden = true;
+      return;
+    }
+    T.core.invoke('pet_hide').catch(() => {});
+  },
+  /** The session as the pet shows it (timer badge, Start menu). Sent every second. */
+  state(s) {
+    if (isNative) T.event.emitTo('pet', 'pet-state', s).catch(() => {});
+    else petFrame?.contentWindow?.postMessage({ type: 'state', state: s }, '*');
+  },
+  /** Tell the pet something happened; it picks its own line. */
+  say(moment, vars = {}) {
+    if (isNative) T.event.emitTo('pet', 'pet-say', { moment, vars }).catch(() => {});
+    else petFrame?.contentWindow?.postMessage({ type: 'say', moment, vars }, '*');
+  },
+  /** Install a pet pack from a .zip File. Resolves to the pack's name. */
+  async import(file) {
+    return T.core.invoke('pet_import', new Uint8Array(await file.arrayBuffer()));
+  },
+  remove: () => T.core.invoke('pet_remove'),
+  /** Menu choices made on the pet: { act: 'hide' } or { act: 'start', id }. */
+  onAct(fn) {
+    petActs.add(fn);
+  },
+};
+
+if (isNative) {
+  T.event.listen('pet-act', (e) => {
+    for (const fn of petActs) fn(e.payload);
+  });
+}
+
+// ---------- background (desktop app) ----------
+
+// Closing the window only hides Togami; the tray icon reopens or quits it.
+export const background = {
+  /** Tray menu choices: "pet" (show or hide the pet) and "quit". */
+  onTray(fn) {
+    if (isNative) T.event.listen('tray-act', (e) => fn(e.payload));
+  },
+  /** A tick every second from the native side, which keeps running while the window is hidden. */
+  onHeartbeat(fn) {
+    if (isNative) T.event.listen('heartbeat', fn);
+  },
+  show: () => isNative && T.core.invoke('show_main'),
+  exit: () => isNative && T.core.invoke('app_exit'),
 };
 
 // ---------- media ----------

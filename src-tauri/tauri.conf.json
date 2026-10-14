@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Togami",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "identifier": "dev.tisdani.togami",
   "build": {
     "frontendDist": "../app"
@@ -16,6 +16,7 @@
         "height": 760,
         "minWidth": 760,
         "minHeight": 560,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,IntensiveWakeUpThrottling,CalculateNativeWinOcclusion --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows",
         "center": true
       }
     ],
