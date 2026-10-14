@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Togami pet</title>
+<style>
+  /* The desktop pet, in a Persona 5 style cut-in: the character sits in a
+     slanted red card; when it speaks, a striped band slashes in behind it and
+     a jagged speech box with a ransom-note name tag pops up. The window is
+     transparent and lets clicks through everywhere but the card, box and menu. */
+  :root {
+    --red: #e3141b;
+    --red-deep: #9e0a10;
+    --ink: #0b0b0b;
+    --paper: #fbfbf6;
+  }
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; -webkit-user-select: none; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; }
+  #stage { position: absolute; inset: 0; }
+  [hidden] { display: none !important; }
+
+  /* ---- the card ---- */
+  .card {
+    position: absolute; right: 16px; bottom: 14px; width: 250px; height: 182px;
+    transform: rotate(-3deg); transform-origin: 70% 80%; cursor: grab;
+    filter: drop-shadow(4px 5px 0 rgba(0, 0, 0, .35));
+  }
+  .card:active { cursor: grabbing; }
+  .card > div { position: absolute; }
+  .card .edge { inset: 0; background: var(--ink); clip-path: polygon(9% 0, 100% 4%, 93% 100%, 0 95%); }
+  .card .rim { inset: 5px; background: var(--paper); clip-path: polygon(9% 0, 100% 4%, 93% 100%, 0 95%); }
+  .card .fill {
+    inset: 10px; overflow: hidden; clip-path: polygon(9% 0, 100% 4%, 93% 100%, 0 95%);
+    background:
+      radial-gradient(circle, rgba(0, 0, 0, .22) 1.3px, transparent 1.8px) 0 0 / 7px 7px,
+      linear-gradient(160deg, var(--red) 0 55%, var(--red-deep) 100%);
+  }
+  .sprite {
+    position: absolute; left: -3%; bottom: -4%; width: 106%; height: auto; pointer-events: none;
+    transform-origin: 50% 100%; animation: breathe 3.8s ease-in-out infinite;
+  }
+  .flip .sprite { scale: -1 1; }
+  @keyframes breathe { 50% { transform: translateY(-2px) scaleY(1.012); } }
+  .chatter .sprite { animation: chatter .26s ease-in-out infinite alternate; }
+  @keyframes chatter { from { transform: translateY(0) rotate(0); } to { transform: translateY(-4px) rotate(-1.2deg); } }
+
+  .card.pop { animation: pop .42s cubic-bezier(.2, 1.6, .4, 1); }
+  @keyframes pop {
+    0% { transform: rotate(-3deg) translateX(46px) scale(.86); }
+    60% { transform: rotate(-5deg) translateX(-6px) scale(1.04); }
+    100% { transform: rotate(-3deg); }
+  }
+  .card.wiggle { animation: wiggle .35s ease-in-out; }
+  @keyframes wiggle { 25% { transform: rotate(-7deg); } 75% { transform: rotate(1deg); } }
+
+  /* ---- the slash band behind the card ---- */
+  .band {
+    position: absolute; right: -30px; bottom: 54px; width: 560px; height: 64px; pointer-events: none;
+    transform: rotate(-11deg) scaleX(0); transform-origin: 100% 50%; opacity: 0;
+    background:
+      repeating-linear-gradient(105deg, transparent 0 34px, rgba(0, 0, 0, .9) 34px 46px),
+      linear-gradient(var(--red), var(--red));
+    clip-path: polygon(0 30%, 100% 0, 100% 100%, 4% 78%);
+    transition: transform .28s cubic-bezier(.2, .9, .3, 1), opacity .18s;
+  }
+  .band.on { transform: rotate(-11deg) scaleX(1); opacity: 1; }
+  .band.b2 {
+    bottom: 28px; height: 26px; width: 520px; transition-delay: .05s;
+    background: var(--ink); clip-path: polygon(0 40%, 100% 0, 100% 100%, 2% 70%);
+  }
+
+  /* ---- speech box ---- */
+  .bubble { position: absolute; left: 8px; bottom: 168px; width: 300px; transform: rotate(-2deg); transform-origin: 80% 100%; }
+  .bubble.show { animation: bubble .3s cubic-bezier(.2, 1.4, .4, 1); }
+  @keyframes bubble { from { transform: rotate(-8deg) scale(.6); opacity: 0; } }
+  .bubble .shape { position: relative; }
+  .bubble .shape::before, .bubble .shape::after, .bubble .shape > i {
+    content: ''; position: absolute; inset: 0;
+    clip-path: polygon(0 12%, 95% 0, 100% 80%, 88% 82%, 93% 100%, 76% 84%, 4% 100%);
+  }
+  .bubble .shape::before { background: var(--red); transform: translate(8px, 7px); }
+  .bubble .shape::after { background: var(--paper); }
+  .bubble .shape > i { inset: 4px; z-index: 1; background: var(--ink); }
+  .bubble p {
+    position: relative; z-index: 2; margin: 0; padding: 24px 30px 34px 24px; min-height: 22px;
+    color: #fff; font-size: 15px; font-weight: 650; line-height: 1.35; letter-spacing: .1px;
+  }
+  .tag { position: absolute; z-index: 2; left: 14px; top: -14px; display: flex; gap: 1px; transform: rotate(-6deg); }
+  .tag span {
+    display: inline-block; padding: 1px 5px 2px; font: 900 15px/1.1 'Arial Black', Impact, sans-serif;
+    border: 2px solid var(--ink); box-shadow: 2px 2px 0 var(--red);
+  }
+  .tag span:nth-child(odd) { background: var(--paper); color: var(--ink); }
+  .tag span:nth-child(even) { background: var(--ink); color: var(--paper); border-color: var(--paper); }
+  .tag span:nth-child(3n) { background: var(--red); color: #fff; }
+
+  /* ---- right-click menu ---- */
+  .menu { position: absolute; left: 30px; bottom: 22px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+  .menu.show { animation: bubble .22s cubic-bezier(.2, 1.4, .4, 1); }
+  .menu button {
+    all: unset; cursor: pointer; padding: 6px 18px 7px 14px; transform: skewX(-12deg);
+    background: var(--ink); color: #fff; font: 900 14px/1 'Arial Black', Impact, sans-serif; letter-spacing: .5px; text-transform: uppercase;
+    box-shadow: 4px 4px 0 var(--red); border: 2px solid var(--paper); transition: transform .1s, background .1s;
+  }
+  .menu button:nth-child(2) { margin-left: 12px; }
+  .menu button:nth-child(3) { margin-left: 24px; }
+  .menu button:nth-child(4) { margin-left: 36px; }
+  .menu button:hover, .menu button:focus-visible { background: var(--red); transform: skewX(-12deg) translateX(6px); box-shadow: 4px 4px 0 var(--ink); }
+  .menu button span { display: inline-block; transform: skewX(12deg); }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <div class="band" id="band"></div>
+    <div class="band b2" id="band2"></div>
+    <div class="bubble" id="bubble" hidden>
+      <div class="tag" id="tag"></div>
+      <div class="shape"><i></i><p id="text" aria-live="polite"></p></div>
+    </div>
+    <div class="card" id="card" hidden>
+      <div class="edge"></div>
+      <div class="rim"></div>
+      <div class="fill"><img class="sprite" id="sprite" alt="" draggable="false" /></div>
+    </div>
+    <div class="menu" id="menu" hidden>
+      <button type="button" data-act="open"><span>Open Togami</span></button>
+      <button type="button" data-act="talk"><span>Talk</span></button>
+      <button type="button" data-act="flip"><span>Turn around</span></button>
+      <button type="button" data-act="hide"><span>Hide</span></button>
+    </div>
+  </div>
+  <script type="module" src="js/pet.js"></script>
+</body>
+</html>

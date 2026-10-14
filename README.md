@@ -24,6 +24,29 @@ A focus timer and distraction blocker for students. Pick a session type, say wha
 - **Jingles and notifications.** A short chime when focus starts, a break starts, a break ends and the session finishes (one at a time), plus a Windows notification when Togami isn't in front. Both can be turned off in Settings.
 - **Automatic updates.** Installed copies check GitHub releases on launch and every few hours, and offer *Restart and update* when no session or lockout is running.
 - **Voices.** Neutral, or *Heir*: cold and superior.
+- **Desktop pet.** Import a pet pack and a character sits in the corner of your desktop in a Persona-style cut-in card. It reacts to focus starts, breaks, blocked sites, pauses, quits, lockouts, pardons and updates with its own lines, blinks, and nags you now and then when no session runs. Drag it anywhere, click it, or right-click for *Open Togami*, *Talk*, *Turn around* and *Hide*. Clicks pass through everything except the pet. Settings → Desktop pet.
+
+### Pet packs
+
+Togami ships without characters. A pack is a zip with `pet.json` and its frames (WebP or PNG):
+
+```json
+{
+  "name": "Morgana",
+  "idle": "happy",
+  "expressions": {
+    "happy": { "intro": ["happy-in0.webp"], "open": "happy-open.webp", "closed": "happy-closed.webp" }
+  },
+  "lines": {
+    "workStart": [{ "e": "happy", "t": "{min} minutes. Let's go!" }]
+  }
+}
+```
+
+- `intro` frames play when the pet switches to an expression, `open` is the resting frame and `closed` (optional) is used for blinking.
+- Moments: `hello`, `workStart`, `breakStart`, `breakEnd`, `sessionEnd`, `blockWarn`, `block`, `pauseRequested`, `paused`, `resumed`, `quit`, `lockout`, `lockoutEnded`, `pardon`, `update`, `idle`, `late`, `poke`. Lines can use `{intention}`, `{min}`, `{target}` and `{version}`. A line is only used when every placeholder has a value. Moments without lines fall back to plain built-in ones.
+- In the browser build, unzip a pack into `packs/current/` (gitignored) and run `npm run dev`.
+- Don't commit packs made from game art.
 
 ## Run it
 

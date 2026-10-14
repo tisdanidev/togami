@@ -458,6 +458,13 @@ td .note.neg { color: var(--neg); }
 .toast.gold { background: var(--gold-wash); color: var(--gold); border: 1px solid color-mix(in srgb, var(--gold) 30%, transparent); }
 .toast.neg { background: var(--neg-wash); color: var(--neg); border: 1px solid color-mix(in srgb, var(--neg) 30%, transparent); }
 
+/* ---------- desktop pet (browser build: an iframe in the corner) ---------- */
+.pet-frame {
+  position: fixed; right: 0; bottom: 48px; z-index: 65; width: 470px; height: 340px; max-width: 100%;
+  border: 0; background: transparent; pointer-events: none; color-scheme: normal;
+}
+.pet-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+
 /* ---------- test bench ---------- */
 .bench-toggle {
   position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 70;

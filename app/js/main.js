@@ -3,7 +3,7 @@
 import * as E from './engine.js';
 import * as store from './store.js';
 import * as clock from './clock.js';
-import { blocker, media, appWindow, notify, updater, isNative, isDev } from './platform.js';
+import { blocker, media, appWindow, notify, updater, pet, isNative, isDev } from './platform.js';
 import * as sounds from './sounds.js';
 import { voice, QUIT_PHRASE } from './voice.js';
 import { clock as fmtClock, fmtMin, fmtHours, fmtDate, fmtTime, esc } from './format.js';
@@ -46,6 +46,10 @@ let appVersion = '';
 let updateInfo = null; // { version, notes } once a newer version is found
 let updateState = 'idle'; // idle | checking | none | installing | error
 let updateError = '';
+let petName = null; // name of the installed pet pack
+let petBusy = ''; // pet pack import or removal message
+let lastNudge = Date.now(); // when the pet last spoke up on its own
+let lastLate = 0;
 
 function now() {
   return clock.now();
@@ -120,15 +124,24 @@ function handle(events, { closed = false } = {}) {
       case 'pardonEarned':
         if (overlay?.type === 'complete') overlay.pardon = true;
         else toast(v.pardonEarned, 'gold');
+        petSay('pardon');
+        break;
+      case 'pauseRequested':
+      case 'paused':
+        petSay(e.type);
         break;
       case 'resumed':
         if (e.auto) toast('The pause ran out. Blocking is back on.');
+        petSay('resumed');
         break;
       case 'lockoutEnded':
         toast('Lockout over. Blocks are off.');
+        petSay('lockoutEnded');
         break;
       case 'quit':
         if (closed || e.entry.forced) toast(v.closedQuit, 'neg');
+        if (state.lockout) petSay('lockout', { min: Math.ceil((state.lockout.until - now()) / 60_000) });
+        else petSay('quit');
         break;
       case 'error':
         toast(e.message, 'neg');
@@ -152,9 +165,10 @@ function announce(events) {
   }
   if (!moment) return;
   if (state.settings.sounds) sounds.play(moment);
-  if (!state.settings.notify || (document.hasFocus() && !document.hidden)) return;
   const sv = state.session && E.sessionView(state, now());
   const intention = state.session?.intention;
+  petSay(moment, { intention, min: sv ? Math.round(sv.remaining / 60_000) : null });
+  if (!state.settings.notify || (document.hasFocus() && !document.hidden)) return;
   const msg = {
     workStart: ['Focus started', `${fmtMin(sv?.remaining ?? 0)}${intention ? ` on ${intention}` : ''}. Blocks are on.`],
     breakStart: [sv?.phase.kind === 'long' ? 'Long break' : 'Break time', `${fmtMin(sv?.remaining ?? 0)} off. Blocks are off until it ends.`],
@@ -491,6 +505,19 @@ function viewSettings(t) {
         <label class="switch"><input type="checkbox" id="setNotify" ${state.settings.notify ? 'checked' : ''} aria-label="Windows notifications" /><i></i></label>
       </div>
     </div>
+    <div class="section">
+      <h2>Desktop pet</h2>
+      ${petName ? `<div class="toggle-row">
+        <div class="lbl"><b>Show ${esc(petName)}</b><span>Sits on your desktop and reacts to your sessions. Drag to move, right-click for options.</span></div>
+        <label class="switch"><input type="checkbox" id="setPet" ${state.settings.pet ? 'checked' : ''} aria-label="Show the desktop pet" /><i></i></label>
+      </div>` : `<p class="muted small" style="margin-top:0">${pet.canImport ? 'Import a pet pack (a .zip with pet.json and its frames) to get a character on your desktop that reacts to your sessions.' : 'Browser build: put an unzipped pet pack in the packs/current folder and reload.'}</p>`}
+      ${pet.canImport ? `<div class="pet-row">
+        <button class="btn" type="button" data-act="petImport">${petName ? 'Replace pet pack' : 'Import pet pack'}</button>
+        ${petName ? '<button class="btn quiet" type="button" data-act="petRemove">Remove pet</button>' : ''}
+        <span class="muted small" id="petMsg">${esc(petBusy)}</span>
+        <input type="file" id="petFile" accept=".zip,application/zip" hidden />
+      </div>` : ''}
+    </div>
     ${updater.available ? `<div class="section">
       <h2>Updates</h2>
       <div class="toggle-row">
@@ -764,6 +791,7 @@ blocker.onAttempt(({ target, stage = 'block', warned = false }) => {
   if (E.isBlocked(state, target, t)) {
     if (!warned) E.recordAttempt(state, target, t);
     commit();
+    petSay(stage === 'warn' ? 'blockWarn' : 'block', { target });
     if (stage === 'warn') return;
     overlay = { type: 'block', target };
     renderOverlay();
@@ -854,6 +882,21 @@ document.addEventListener('click', (ev) => {
       }
       overlay = { type: 'quit', step: 1 };
       renderOverlay();
+      break;
+    case 'petImport':
+      $('#petFile')?.click();
+      break;
+    case 'petRemove':
+      pet.remove().then(() => {
+        petName = null;
+        state.settings.pet = false;
+        commit();
+        render();
+        toast('Pet removed.');
+      }, (err) => toast(String(err), 'neg'));
+      break;
+    case 'petSay':
+      pet.say(btn.dataset.v, { target: 'youtube.com', intention: 'History essay', min: 25, version: '9.9.9' });
       break;
     case 'fire':
       sounds.play(btn.dataset.v);
@@ -1053,6 +1096,18 @@ document.addEventListener('change', (ev) => {
     commit();
     return;
   }
+  if (el.id === 'setPet') {
+    state.settings.pet = el.checked;
+    commit();
+    if (el.checked) showPet();
+    else pet.hide();
+    return;
+  }
+  if (el.id === 'petFile') {
+    const file = el.files?.[0];
+    if (file) importPet(file);
+    return;
+  }
   if (E.isLocked(state, now())) return;
   if (el.id === 'blockBreaks') {
     state.settings.blockBreaks = el.checked;
@@ -1129,8 +1184,10 @@ async function checkForUpdate(manual = false) {
   updateState = 'checking';
   if (manual) render();
   try {
+    const had = updateInfo?.version;
     updateInfo = await updater.check();
     updateState = updateInfo ? 'idle' : 'none';
+    if (updateInfo && updateInfo.version !== had) petSay('update', { version: updateInfo.version });
   } catch (err) {
     updateState = manual ? 'error' : 'idle';
     updateError = String(err);
@@ -1156,6 +1213,67 @@ if (updater.available) {
   setTimeout(checkForUpdate, 8000);
   setInterval(checkForUpdate, 6 * 60 * 60 * 1000);
 }
+
+// ---------- desktop pet ----------
+
+/** Tell the pet about a moment, if it is on. */
+function petSay(moment, vars = {}) {
+  if (state.settings.pet && petName) pet.say(moment, vars);
+}
+
+function showPet() {
+  pet.show().catch((err) => {
+    state.settings.pet = false;
+    commit();
+    render();
+    toast(`The pet could not open: ${err}`, 'neg');
+  });
+}
+
+async function importPet(file) {
+  petBusy = 'Importing…';
+  render();
+  try {
+    petName = await pet.import(file);
+    petBusy = '';
+    state.settings.pet = true;
+    commit();
+    showPet();
+    toast(`${petName} is on your desktop.`);
+  } catch (err) {
+    petBusy = '';
+    toast(String(err), 'neg');
+  }
+  render();
+}
+
+pet.packName().then((name) => {
+  petName = name;
+  if (name && state.settings.pet) showPet();
+  if (route === 'settings') render();
+  renderBench();
+});
+
+pet.onAct((act) => {
+  if (act !== 'hide') return;
+  state.settings.pet = false;
+  commit();
+  pet.hide();
+  if (route === 'settings') render();
+});
+
+// now and then, while no session runs, the pet speaks up
+setInterval(() => {
+  if (!state.settings.pet || !petName || state.session || E.isLocked(state, now())) return;
+  const h = new Date().getHours();
+  if (h < 5 && Date.now() - lastLate > 90 * 60_000) {
+    lastLate = lastNudge = Date.now();
+    petSay('late');
+  } else if (Date.now() - lastNudge > 30 * 60_000) {
+    lastNudge = Date.now();
+    petSay('idle');
+  }
+}, 60_000);
 
 // ---------- misc ----------
 
@@ -1232,6 +1350,9 @@ function renderBench() {
     <div><h3 style="margin-bottom:6px">Jingle and notification</h3><div class="row">
       ${[['workStart', 'Focus started'], ['breakStart', 'Break time'], ['breakEnd', 'Break over'], ['sessionEnd', 'Session complete']].map(([k, l]) => `<button class="btn" type="button" data-act="fire" data-v="${k}">${l}</button>`).join('')}
     </div></div>
+    ${petName ? `<div><h3 style="margin-bottom:6px">${esc(petName)} says</h3><div class="row">
+      ${['hello', 'workStart', 'breakStart', 'breakEnd', 'sessionEnd', 'blockWarn', 'block', 'pauseRequested', 'quit', 'lockout', 'pardon', 'update', 'idle', 'late'].map((m) => `<button class="btn" type="button" data-act="petSay" data-v="${m}">${m}</button>`).join('')}
+    </div></div>` : ''}
     ${isNative ? '' : `<div><h3 style="margin-bottom:6px">Other</h3><div class="row">
       <button class="btn" type="button" data-act="music" aria-pressed="${media.isEnabled()}">Sample music</button>
       <button class="btn" type="button" data-act="closeGap" ${state.session ? '' : 'disabled'}>Close Togami for 2 min</button>
