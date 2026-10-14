@@ -22,9 +22,10 @@ A focus timer and distraction blocker for students. Pick a session type, say wha
 - **Ledger.** Weekly focus time, finished sessions, streak, what you tried to open, and the full history.
 - **Now playing.** The current track with play/pause/skip.
 - **Jingles and notifications.** A short chime when focus starts, a break starts, a break ends and the session finishes (one at a time), plus a Windows notification when Togami isn't in front. Both can be turned off in Settings.
+- **Runs in the background.** Closing the window hides Togami to the tray: the timer, blocking, jingles and the pet keep going. Click the tray icon to bring it back; quit from the tray menu (it asks first during a session, since that counts as quitting). Opening Togami again brings back the running copy.
 - **Automatic updates.** Installed copies check GitHub releases on launch and every few hours, and offer *Restart and update* when no session or lockout is running.
 - **Voices.** Neutral, or *Heir*: cold and superior.
-- **Desktop pet.** Import a pet pack and a character sits in the corner of your desktop in a Persona-style cut-in card. It reacts to focus starts, breaks, blocked sites, pauses, quits, lockouts, pardons and updates with its own lines, blinks, and nags you now and then when no session runs. Drag it anywhere, click it, or right-click for *Open Togami*, *Talk*, *Turn around* and *Hide*. Clicks pass through everything except the pet. Settings → Desktop pet.
+- **Desktop pet.** Import a pet pack and a character sits in the corner of your desktop in a Persona-style cut-in card. It reacts to focus starts, breaks, blocked sites, pauses, quits, lockouts, pardons and updates with its own lines, blinks, and nags you now and then when no session runs. Drag it anywhere, click it, or right-click for *Start focus* (pick a session type), *Open Togami*, *Talk*, *Turn around* and *Hide*. While a session runs, a timer badge sits on its card. Clicks pass through everything except the pet. Settings → Desktop pet.
 
 ### Pet packs
 
@@ -113,7 +114,7 @@ Or run the **Release** workflow from the Actions tab: it tags `v<version>` itsel
 
 - Site blocking is tested against Chrome, Edge and Firefox. In other browsers it relies on window titles, which can miss pages that don't name the site.
 - Togami Dev's test bench shows what the blocker sees in front (program, title, address), which helps when a site slips through.
-- Blocking only applies while Togami is running. Closing it mid-session counts as quitting.
+- Blocking only applies while Togami is running. Closing the window keeps it running in the tray; quitting it mid-session counts as quitting.
 
 ## Layout
 

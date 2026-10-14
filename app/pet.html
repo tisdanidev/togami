@@ -118,6 +118,23 @@
   .menu button:nth-child(2) { margin-left: 12px; }
   .menu button:nth-child(3) { margin-left: 24px; }
   .menu button:nth-child(4) { margin-left: 36px; }
+  .menu button:nth-child(5) { margin-left: 48px; }
+  .menu button:nth-child(6) { margin-left: 60px; }
+  .menu button small { font-size: 11px; opacity: .7; margin-left: 6px; letter-spacing: 0; }
+  .menu button.off { background: #3a3a3a; color: #bbb; box-shadow: 4px 4px 0 #555; }
+
+  /* ---- timer badge on the card while a session runs ---- */
+  .badge {
+    position: absolute; left: 26px; bottom: 166px; z-index: 3; cursor: pointer;
+    display: flex; align-items: baseline; gap: 8px; padding: 5px 14px 6px 12px;
+    transform: rotate(-6deg) skewX(-10deg); background: var(--ink); color: #fff;
+    border: 2px solid var(--paper); box-shadow: 5px 4px 0 var(--red);
+  }
+  .badge > * { transform: skewX(10deg); }
+  .badge small { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; opacity: .85; }
+  .badge b { font-size: 24px; line-height: 1; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: .5px; }
+  .badge.brk { background: var(--paper); color: var(--ink); border-color: var(--ink); box-shadow: 5px 4px 0 #1f9d55; }
+  .badge.paused { background: #3a3a3a; box-shadow: 5px 4px 0 #777; }
   .menu button:hover, .menu button:focus-visible { background: var(--red); transform: skewX(-12deg) translateX(6px); box-shadow: 4px 4px 0 var(--ink); }
   .menu button span { display: inline-block; transform: skewX(12deg); }
 </style>
@@ -147,12 +164,8 @@
       <div class="rim"></div>
       <div class="fill"><img class="sprite" id="sprite" alt="" draggable="false" /></div>
     </div>
-    <div class="menu" id="menu" hidden>
-      <button type="button" data-act="open"><span>Open Togami</span></button>
-      <button type="button" data-act="talk"><span>Talk</span></button>
-      <button type="button" data-act="flip"><span>Turn around</span></button>
-      <button type="button" data-act="hide"><span>Hide</span></button>
-    </div>
+    <div class="badge" id="badge" hidden title="Open Togami"></div>
+    <div class="menu" id="menu" hidden></div>
   </div>
   <script type="module" src="js/pet.js"></script>
 </body>

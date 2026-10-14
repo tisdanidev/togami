@@ -152,6 +152,7 @@ pub async fn pet_show(app: AppHandle, pos: Option<(i32, i32)>) -> Result<(), Str
     }
     let w = WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::App("pet.html".into()))
         .title("Togami pet")
+        .additional_browser_args(crate::tray::BROWSER_ARGS)
         .inner_size(WIDTH, HEIGHT)
         .resizable(false)
         .decorations(false)

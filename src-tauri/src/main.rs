@@ -1,7 +1,8 @@
 // Togami desktop shell. The UI lives in ../app; this adds what a web page
 // can't do: watching the foreground window to block apps and sites, and
 // reading what's playing from Windows' media controls, notifications,
-// updating itself from GitHub releases, and the desktop pet window.
+// updating itself from GitHub releases, the desktop pet window, and running
+// in the background with a tray icon.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -10,11 +11,12 @@ mod media;
 mod pet;
 mod rules;
 mod system;
-
-use tauri::Manager;
+mod tray;
 
 fn main() {
     tauri::Builder::default()
+        // a second launch brings back the running Togami (it may be hidden in the tray)
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| pet::show_main(app.clone())))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(blocker::Shared::default())
@@ -24,15 +26,10 @@ fn main() {
         .setup(|app| {
             blocker::start(app.handle().clone());
             pet::start(app.handle().clone());
+            tray::setup(app.handle())?;
             Ok(())
         })
-        // the pet window must not keep Togami (and its blocker) running once
-        // the main window is closed
-        .on_window_event(|window, event| {
-            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
-                window.app_handle().exit(0);
-            }
-        })
+        .on_window_event(tray::on_window_event)
         .invoke_handler(tauri::generate_handler![
             blocker::blocker_sync,
             blocker::blocker_seen,
@@ -49,7 +46,8 @@ fn main() {
             pet::pet_show,
             pet::pet_hide,
             pet::pet_hit,
-            pet::show_main
+            pet::show_main,
+            tray::app_exit
         ])
         .run(tauri::generate_context!())
         .expect("Togami failed to start");

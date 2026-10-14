@@ -114,7 +114,7 @@ function browserPetFrame() {
     if (e.source !== petFrame.contentWindow) return;
     if (e.data?.type === 'pet-hit') petRects = e.data.rects;
     if (e.data?.type === 'pet-leave') petFrame.style.pointerEvents = 'none';
-    if (e.data?.type === 'pet-act') for (const fn of petActs) fn(e.data.act);
+    if (e.data?.type === 'pet-act') for (const fn of petActs) fn(e.data);
   });
   // the iframe only takes the pointer while it is over the pet
   addEventListener('pointermove', (e) => {
@@ -158,6 +158,11 @@ export const pet = {
     }
     T.core.invoke('pet_hide').catch(() => {});
   },
+  /** The session as the pet shows it (timer badge, Start menu). Sent every second. */
+  state(s) {
+    if (isNative) T.event.emitTo('pet', 'pet-state', s).catch(() => {});
+    else petFrame?.contentWindow?.postMessage({ type: 'state', state: s }, '*');
+  },
   /** Tell the pet something happened; it picks its own line. */
   say(moment, vars = {}) {
     if (isNative) T.event.emitTo('pet', 'pet-say', { moment, vars }).catch(() => {});
@@ -168,7 +173,7 @@ export const pet = {
     return T.core.invoke('pet_import', new Uint8Array(await file.arrayBuffer()));
   },
   remove: () => T.core.invoke('pet_remove'),
-  /** Menu choices made on the pet ("hide"). */
+  /** Menu choices made on the pet: { act: 'hide' } or { act: 'start', id }. */
   onAct(fn) {
     petActs.add(fn);
   },
@@ -176,9 +181,25 @@ export const pet = {
 
 if (isNative) {
   T.event.listen('pet-act', (e) => {
-    for (const fn of petActs) fn(e.payload.act);
+    for (const fn of petActs) fn(e.payload);
   });
 }
+
+// ---------- background (desktop app) ----------
+
+// Closing the window only hides Togami; the tray icon reopens or quits it.
+export const background = {
+  /** Tray menu choices: "pet" (show or hide the pet) and "quit". */
+  onTray(fn) {
+    if (isNative) T.event.listen('tray-act', (e) => fn(e.payload));
+  },
+  /** A tick every second from the native side, which keeps running while the window is hidden. */
+  onHeartbeat(fn) {
+    if (isNative) T.event.listen('heartbeat', fn);
+  },
+  show: () => isNative && T.core.invoke('show_main'),
+  exit: () => isNative && T.core.invoke('app_exit'),
+};
 
 // ---------- media ----------
 

@@ -51,10 +51,11 @@ const host = T
         return { manifest, src: (f) => files[f] };
       },
       onSay: (fn) => T.event.listen('pet-say', (e) => fn(e.payload)),
+      onState: (fn) => T.event.listen('pet-state', (e) => fn(e.payload)),
       hit: (rects) => T.core.invoke('pet_hit', { rects }).catch(() => {}),
-      act(act) {
+      act(act, data = {}) {
         if (act === 'open') T.core.invoke('show_main');
-        else T.event.emitTo('main', 'pet-act', { act });
+        else T.event.emitTo('main', 'pet-act', { act, ...data });
       },
       drag: () => T.window.getCurrentWindow().startDragging().catch(() => {}),
       init() {
@@ -73,13 +74,14 @@ const host = T
         return { manifest: await r.json(), src: (f) => 'packs/current/' + f };
       },
       onSay: (fn) => addEventListener('message', (e) => e.data?.type === 'say' && fn(e.data)),
+      onState: (fn) => addEventListener('message', (e) => e.data?.type === 'state' && fn(e.data.state)),
       hit: (rects) => parent.postMessage({ type: 'pet-hit', rects }, '*'),
-      act: (act) => parent.postMessage({ type: 'pet-act', act }, '*'),
+      act: (act, data = {}) => parent.postMessage({ type: 'pet-act', act, ...data }, '*'),
       drag() {},
       init() {
         // let clicks through to the page again once the pointer leaves the pet
         addEventListener('pointermove', (e) => {
-          if (!e.target.closest('#card, #bubble, #menu')) parent.postMessage({ type: 'pet-leave' }, '*');
+          if (!e.target.closest('#card, #bubble, #menu, #badge')) parent.postMessage({ type: 'pet-leave' }, '*');
         });
         document.addEventListener('pointerleave', () => parent.postMessage({ type: 'pet-leave' }, '*'));
       },
@@ -93,6 +95,7 @@ let expr = null; // current expression name
 let busy = false; // playing intro frames
 let speaking = null; // { timer, typing }
 let lastLine = {};
+let app = null; // from Togami: { locked, lockoutMs, profiles, session }
 let flipped = false;
 try {
   flipped = localStorage.getItem('togami.pet.flip') === '1';
@@ -115,6 +118,12 @@ async function boot() {
   blinkLoop();
   setInterval(sendHit, 250);
   host.onSay(({ moment, vars }) => say(moment, vars));
+  host.onState((s) => {
+    app = s;
+    renderBadge();
+    if (!menu.hidden && menu.dataset.view === 'main') renderMenu('main');
+  });
+  host.act('ready'); // ask Togami for the current state
   setTimeout(() => say('hello'), 700);
 }
 
@@ -266,6 +275,7 @@ card.addEventListener('contextmenu', (e) => {
   bubble.hidden = true;
   for (const b of bands) b.classList.remove('on');
   show(idleName(), false);
+  renderMenu('main');
   menu.hidden = false;
   restartAnim(menu, 'show');
 });
@@ -278,10 +288,20 @@ bubble.addEventListener('click', () => {
 });
 
 menu.addEventListener('click', (e) => {
-  const act = e.target.closest('[data-act]')?.dataset.act;
+  const btn = e.target.closest('[data-act]');
+  const act = btn?.dataset.act;
   if (!act) return;
+  if (act === 'startMenu' || act === 'back') {
+    renderMenu(act === 'back' ? 'main' : 'start');
+    restartAnim(menu, 'show');
+    return;
+  }
   hideMenu();
-  if (act === 'talk') {
+  if (act === 'locked') {
+    say('lockout', { min: Math.ceil((app?.lockoutMs ?? 0) / 60_000) });
+  } else if (act === 'start') {
+    host.act('start', { id: btn.dataset.id });
+  } else if (act === 'talk') {
     const h = new Date().getHours();
     say(h >= 0 && h < 5 ? 'late' : Math.random() < 0.5 ? 'poke' : 'idle');
   } else if (act === 'flip') {
@@ -300,12 +320,46 @@ function hideMenu() {
   menu.hidden = true;
 }
 
+/** The right-click menu: "main", or "start" (pick a session type). */
+function renderMenu(view) {
+  menu.dataset.view = view;
+  const item = (act, label, extra = '') => `<button type="button" data-act="${act}" ${extra}><span>${label}</span></button>`;
+  if (view === 'start' && app && !app.session && !app.locked) {
+    menu.innerHTML =
+      app.profiles.map((p) => item('start', `${esc(p.name)} <small>${esc(p.label)}</small>`, `data-id="${esc(p.id)}"`)).join('') +
+      item('back', 'Back');
+    return;
+  }
+  menu.dataset.view = 'main';
+  let first = '';
+  if (app && !app.session) {
+    first = app.locked ? item('locked', `Locked · ${Math.ceil(app.lockoutMs / 60_000)} min`, 'class="off"') : item('startMenu', 'Start focus');
+  }
+  menu.innerHTML = first + item('open', 'Open Togami') + item('talk', 'Talk') + item('flip', 'Turn around') + item('hide', 'Hide');
+}
+
+// ---------- timer badge (while a session runs) ----------
+
+const badge = $('#badge');
+badge.addEventListener('click', () => host.act('open'));
+
+function renderBadge() {
+  const s = app?.session;
+  badge.hidden = !s || !pack;
+  if (!s) return;
+  const sec = Math.round(s.remaining / 1000);
+  const time = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+  const label = s.pause === 'paused' ? 'Paused' : s.kind === 'focus' ? 'Focus' : s.kind === 'long' ? 'Long break' : 'Break';
+  badge.className = 'badge ' + (s.pause === 'paused' ? 'paused' : s.kind === 'focus' ? 'focus' : 'brk');
+  badge.innerHTML = `<small>${label}</small><b>${time}</b>`;
+}
+
 // ---------- hit rectangles (where clicks belong to the pet) ----------
 
 let lastHit = '';
 
 function sendHit() {
-  const rects = [card, bubble, menu]
+  const rects = [card, bubble, menu, badge]
     .filter((el) => !el.hidden)
     .map((el) => {
       const r = el.getBoundingClientRect();
