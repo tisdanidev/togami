@@ -46,15 +46,16 @@
   .card:active { cursor: grabbing; }
   .card > div { position: absolute; }
   .card .edge { inset: 0; background: var(--ink); clip-path: polygon(9% 0, 100% 4%, 93% 100%, 0 95%); }
-  .card .rim { inset: 5px; background: var(--paper); clip-path: polygon(9% 0, 100% 4%, 93% 100%, 0 95%); }
+  /* rim and fill are inset by a different amount at each corner (thick-thin outline) */
+  .card .rim { inset: 0; background: var(--paper); clip-path: polygon(9.8% 1.3%, 97% 7.5%, 89.5% 93.9%, 1.5% 93.2%); }
   .card .fill {
-    inset: 10px; overflow: hidden; clip-path: polygon(9% 0, 100% 4%, 93% 100%, 0 95%);
+    inset: 0; overflow: hidden; clip-path: polygon(11% 3.2%, 94.6% 9.7%, 87.6% 90.3%, 3.5% 90.7%);
     background:
       radial-gradient(circle, rgba(0, 0, 0, .22) 1.3px, transparent 1.8px) 0 0 / 7px 7px,
       linear-gradient(160deg, var(--red) 0 55%, var(--red-deep) 100%);
   }
   .sprite {
-    position: absolute; left: -3%; bottom: -4%; width: 106%; height: auto; pointer-events: none;
+    position: absolute; left: 1.8%; bottom: 2.4%; width: 96.5%; height: auto; pointer-events: none;
     transform-origin: 50% 100%; animation: breathe 3.8s ease-in-out infinite;
   }
   .flip .sprite { scale: -1 1; }
@@ -124,12 +125,15 @@
     <div class="bubble" id="bubble" hidden>
       <!-- traced from the P5 dialogue box (950 x 284) -->
       <svg viewBox="0 0 950 284" preserveAspectRatio="none" aria-hidden="true">
-        <g stroke-linejoin="miter" stroke-miterlimit="10">
-          <polygon points="128,128 828,70 860,276 166,236 140,250 98,206 74,218 58,192 2,166 74,150" fill="none" stroke="#0b0b0b" stroke-width="20" />
-          <polygon points="128,128 828,70 860,276 166,236 140,250 98,206 74,218 58,192 2,166 74,150" fill="#262626" stroke="#fbfbf6" stroke-width="6" />
-          <polygon points="68,104 440,4 478,52 134,130 96,128 112,112" fill="#fbfbf6" stroke="#0b0b0b" stroke-width="9" />
-          <polygon points="870,110 946,180 742,246" fill="#fbfbf6" stroke="#0b0b0b" stroke-width="9" />
-        </g>
+        <!-- outlines are filled layers offset by a different amount at each
+             corner, so the black and white lines swell and thin like P5's -->
+        <polygon points="127,125 836,60 888,302 167,244 139,255 95,219 72,224 51,204 -6,165 72,142" fill="#0b0b0b" />
+        <polygon points="128,127 831,66 870,286 167,239 140,251 97,211 73,220 55,196 -1,166 73,147" fill="#fbfbf6" />
+        <polygon points="128,128 828,70 860,276 166,236 140,250 98,206 74,218 58,192 2,166 74,150" fill="#262626" />
+        <polygon points="56,105 442,-4 502,60 134,134 77,134 107,113" fill="#0b0b0b" />
+        <polygon points="68,104 440,4 478,52 134,130 96,128 112,112" fill="#fbfbf6" />
+        <polygon points="868,105 969,186 733,253" fill="#0b0b0b" />
+        <polygon points="870,110 946,180 742,246" fill="#fbfbf6" />
       </svg>
       <div class="name" id="name"></div>
       <p id="text" aria-live="polite"></p>
