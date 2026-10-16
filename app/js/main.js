@@ -46,6 +46,7 @@ let appVersion = '';
 let updateInfo = null; // { version, notes } once a newer version is found
 let updateState = 'idle'; // idle | checking | none | installing | error
 let updateError = '';
+let updatePreview = false; // test bench: show the update screen without a real update
 let petName = null; // name of the installed pet pack
 let petBusy = ''; // pet pack import or removal message
 let lastNudge = Date.now(); // when the pet last spoke up on its own
@@ -112,6 +113,7 @@ function loop() {
   }
   updateLive(t);
   sendPetState(t);
+  if (updateInfo) renderForceUpdate();
 }
 
 function handle(events, { closed = false } = {}) {
@@ -186,7 +188,7 @@ function mode(t) {
   if (E.lockoutActive(state, t)) return 'lockout';
   if (!state.session) return 'idle';
   const v = E.sessionView(state, t);
-  return `run:${v.phaseIndex}:${v.pause}`;
+  return `run:${v.phaseIndex}:${v.pause}:${v.held}`;
 }
 
 function render() {
@@ -205,6 +207,7 @@ function render() {
   if (input) input.value = intentionDraft;
   renderZen(t);
   renderUpdateLine();
+  renderForceUpdate();
   fillNowPlaying();
   renderOverlay();
   renderBench();
@@ -299,11 +302,17 @@ function renderZen(t) {
   const v = voice(state);
   const isFocus = sv.phase.kind === 'focus';
   zen.hidden = false;
-  zen.className = 'zen' + (isFocus ? (sv.pause === 'paused' ? ' paused' : '') : ' brk');
+  zen.className = 'zen' + (isFocus ? (sv.pause === 'paused' ? ' paused' : '') : ' brk') + (sv.held ? ' held' : '');
+  // clicking the timer stops and starts it; blocking stays on while it's stopped
+  const timer = sv.pause === 'paused'
+    ? '<div class="z-timer" data-live="timer"></div>'
+    : `<button class="z-timer" type="button" data-act="hold" data-live="timer" title="${sv.held ? 'Start the timer again' : 'Pause the timer (blocking stays on)'}"></button>`;
+  const heldLine = sv.held ? '<div class="z-pause">Timer paused. Blocking stays on. Click the timer to carry on.</div>' : '';
   if (!isFocus) {
     zen.innerHTML = `
-      <div class="z-label">${sv.phase.kind === 'long' ? 'Long break' : 'Break'}</div>
-      <div class="z-timer" data-live="timer"></div>
+      <div class="z-label">${sv.held ? 'Break · timer paused' : sv.phase.kind === 'long' ? 'Long break' : 'Break'}</div>
+      ${timer}
+      ${heldLine}
       <div class="z-np" data-np="full"></div>
       <div class="z-bottom"><button class="z-btn" type="button" data-act="quit">Quit session</button></div>
       <div class="z-hint">F11 full screen</div>`;
@@ -316,13 +325,14 @@ function renderZen(t) {
     pause = `<div class="z-pause">Blocking is off. Resumes by itself in <b data-live="pauseOut"></b><button class="z-btn strong" type="button" data-act="resume">Resume now</button></div>`;
   }
   zen.innerHTML = `
-    <div class="z-label">${sv.pause === 'paused' ? 'Paused' : 'Focus'} · ${sv.focusIndex} of ${sv.focusTotal}</div>
-    <div class="z-timer" data-live="timer"></div>
+    <div class="z-label">${sv.pause === 'paused' ? 'Paused' : sv.held ? 'Focus · timer paused' : 'Focus'} · ${sv.focusIndex} of ${sv.focusTotal}</div>
+    ${timer}
     ${s.intention ? `<p class="z-intent">${esc(s.intention)}</p>` : ''}
+    ${heldLine}
     ${pause}
     <div class="z-np z-np-quiet" data-np="full"></div>
     <div class="z-bottom">
-      ${sv.pause === 'none' ? `<button class="z-btn" type="button" data-act="pause" ${sv.remaining > E.RULES.pauseWaitMs ? '' : 'disabled'}>Pause</button>` : ''}
+      ${sv.pause === 'none' && !sv.held ? `<button class="z-btn" type="button" data-act="pause" ${sv.remaining > E.RULES.pauseWaitMs ? '' : 'disabled'}>Pause</button>` : ''}
       <button class="z-btn" type="button" data-act="quit">Quit</button>
     </div>
     <div class="z-hint">F11 full screen</div>`;
@@ -580,7 +590,7 @@ function updateLive(t) {
     txt = `Locked ${fmtClock(state.lockout.until - t)}`;
   } else if (state.session) {
     const sv = E.sessionView(state, t);
-    txt = `${sv.phase.kind === 'focus' ? 'Focus' : 'Break'} ${fmtClock(sv.remaining)}`;
+    txt = `${sv.phase.kind === 'focus' ? 'Focus' : 'Break'} ${fmtClock(sv.remaining)}${sv.held ? ' (paused)' : ''}`;
   }
   const html = `<span class="dot"></span><span>${txt}</span>`;
   if (st.innerHTML !== html) st.innerHTML = html;
@@ -782,6 +792,15 @@ function fillSlot(slot, size) {
   if (bar) bar.style.width = tr.durationMs ? `${Math.min(100, (tr.positionMs / tr.durationMs) * 100)}%` : '100%';
 }
 
+/** Click on the timer (or the pet's badge): stop or restart the timer. Blocking stays on. */
+function toggleHold() {
+  const t = now();
+  const sv = state.session && E.sessionView(state, t);
+  if (!sv || sv.pause === 'paused') return;
+  handle(sv.held ? E.unhold(state, t) : E.hold(state, t));
+  if (!sv.held) toast('Timer paused. Blocking stays on.');
+}
+
 function startSession(intention, profileId) {
   const ev = E.start(state, { intention, profileId }, now());
   if (ev[0]?.type === 'started') {
@@ -830,6 +849,13 @@ document.addEventListener('click', (ev) => {
       checkForUpdate(true);
       break;
     case 'updInstall':
+      if (updatePreview) {
+        updatePreview = false;
+        updateInfo = null;
+        renderForceUpdate();
+        toast('Update screen preview closed.');
+        break;
+      }
       if (E.isLocked(state, t)) return;
       updateState = 'installing';
       render();
@@ -867,6 +893,9 @@ document.addEventListener('click', (ev) => {
       startSession(intentionDraft, state.profileId);
       break;
     }
+    case 'hold':
+      toggleHold();
+      break;
     case 'pause':
       handle(E.requestPause(state, t));
       break;
@@ -1019,6 +1048,11 @@ document.addEventListener('click', (ev) => {
       toast('Everything was reset.');
       break;
     // test bench
+    case 'updPreview':
+      updatePreview = true;
+      updateInfo = { version: '9.9.9' };
+      renderForceUpdate();
+      break;
     case 'speed':
       clock.setSpeed(Number(btn.dataset.v));
       renderBench();
@@ -1050,6 +1084,10 @@ document.addEventListener('input', (ev) => {
 });
 
 document.addEventListener('keydown', (ev) => {
+  if (!$('#forceUpdate').hidden && ev.key !== 'Enter' && ev.key !== ' ') {
+    ev.preventDefault();
+    return;
+  }
   if (ev.key === 'F11') {
     ev.preventDefault();
     appWindow.toggleFullscreen();
@@ -1203,7 +1241,36 @@ async function checkForUpdate(manual = false) {
     updateError = String(err);
   }
   renderUpdateLine();
+  renderForceUpdate();
   if (route === 'settings') render();
+}
+
+/** A found update covers the whole window until it's installed. It waits
+ *  for the session or lockout to end, since restarting mid-session could count as quitting. */
+function renderForceUpdate() {
+  const el = $('#forceUpdate');
+  const show = Boolean((updater.available || updatePreview) && updateInfo && !E.isLocked(state, now()));
+  if (!show) {
+    if (!el.hidden) el.hidden = true;
+    return;
+  }
+  const busy = updateState === 'installing';
+  const html = `<div class="fu-card">
+      ${markSvg()}
+      <h2 id="fuTitle">Update required</h2>
+      <p>${esc(APP_NAME)} ${esc(updateInfo.version)} is ready. Install it to keep using ${esc(APP_NAME)}.</p>
+      ${updateState === 'error' ? `<p class="fu-err">Update failed: ${esc(updateError)}</p>` : ''}
+      <button class="btn primary solid" type="button" data-act="updInstall" ${busy ? 'disabled' : ''}>${busy ? 'Downloading… Togami restarts by itself' : updateState === 'error' ? 'Try again' : 'Install and restart'}</button>
+      <p class="muted small">Takes a few seconds. Your history and settings are kept.</p>
+    </div>`;
+  if (el.dataset.html !== html) {
+    el.dataset.html = html;
+    el.innerHTML = html;
+  }
+  if (el.hidden) {
+    el.hidden = false;
+    el.querySelector('button')?.focus({ preventScroll: true });
+  }
 }
 
 /** Small "update ready" line in the sidebar. Hidden while a session or lockout runs. */
@@ -1309,7 +1376,17 @@ pet.onAct(({ act, id }) => {
     sendPetState(now());
     return;
   }
+  if (act === 'hold') {
+    toggleHold();
+    return;
+  }
   if (act === 'start') {
+    // an update has to be installed first: show it instead
+    if (updateInfo && (updater.available || updatePreview)) {
+      background.show();
+      renderForceUpdate();
+      return;
+    }
     if (!state.profiles.some((p) => p.id === id)) return;
     startSession('', id);
     return;
@@ -1330,7 +1407,7 @@ function sendPetState(t) {
     locked: !state.session && E.isLocked(state, t),
     lockoutMs: state.lockout && !state.session ? Math.max(0, state.lockout.until - t) : 0,
     profiles: state.profiles.map((p) => ({ id: p.id, name: p.name, label: profileLabel(p) })),
-    session: sv ? { kind: sv.phase.kind, pause: sv.pause, remaining: Math.ceil(sv.remaining / 1000) * 1000 } : null,
+    session: sv ? { kind: sv.phase.kind, pause: sv.pause, held: sv.held, remaining: Math.ceil(sv.remaining / 1000) * 1000 } : null,
   };
   const key = JSON.stringify(s);
   if (key === lastPetState) return;
@@ -1425,6 +1502,9 @@ function renderBench() {
     </div></div>
     <div><h3 style="margin-bottom:6px">Jingle and notification</h3><div class="row">
       ${[['workStart', 'Focus started'], ['breakStart', 'Break time'], ['breakEnd', 'Break over'], ['sessionEnd', 'Session complete']].map(([k, l]) => `<button class="btn" type="button" data-act="fire" data-v="${k}">${l}</button>`).join('')}
+    </div></div>
+    <div><h3 style="margin-bottom:6px">Updates</h3><div class="row">
+      <button class="btn" type="button" data-act="updPreview">Show the update screen</button>
     </div></div>
     ${petName ? `<div><h3 style="margin-bottom:6px">${esc(petName)} says</h3><div class="row">
       ${['hello', 'workStart', 'breakStart', 'breakEnd', 'sessionEnd', 'blockWarn', 'block', 'pauseRequested', 'quit', 'lockout', 'pardon', 'update', 'idle', 'late'].map((m) => `<button class="btn" type="button" data-act="petSay" data-v="${m}">${m}</button>`).join('')}

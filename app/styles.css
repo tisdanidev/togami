@@ -458,6 +458,24 @@ td .note.neg { color: var(--neg); }
 .toast.gold { background: var(--gold-wash); color: var(--gold); border: 1px solid color-mix(in srgb, var(--gold) 30%, transparent); }
 .toast.neg { background: var(--neg-wash); color: var(--neg); border: 1px solid color-mix(in srgb, var(--neg) 30%, transparent); }
 
+/* ---------- click-to-pause timer ---------- */
+button.z-timer { background: none; border: 0; padding: 0; color: inherit; cursor: pointer; border-radius: 12px; transition: opacity .15s; }
+button.z-timer:hover { opacity: .8; }
+button.z-timer:focus-visible { outline: 2px solid var(--accent); outline-offset: 6px; }
+.zen.held .z-timer { opacity: .45; }
+
+/* ---------- update required: covers everything ---------- */
+.force-update {
+  position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px;
+  background: var(--bg); animation: fade .18s ease-out;
+}
+.force-update .fu-card { max-width: 420px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.force-update .fu-card svg { width: 44px; height: 44px; color: var(--accent); }
+.force-update h2 { font: 400 32px/1.15 var(--serif); margin: 6px 0 0; }
+.force-update p { margin: 0; color: var(--muted); }
+.force-update .fu-err { color: var(--neg); }
+.force-update .btn { margin-top: 8px; }
+
 /* ---------- desktop pet (browser build: an iframe in the corner) ---------- */
 .pet-frame {
   position: fixed; right: 0; bottom: 48px; z-index: 65; width: 560px; height: 340px; max-width: 100%;

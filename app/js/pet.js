@@ -341,7 +341,8 @@ function renderMenu(view) {
 // ---------- timer badge (while a session runs) ----------
 
 const badge = $('#badge');
-badge.addEventListener('click', () => host.act('open'));
+// click the badge to pause or restart the timer (blocking stays on)
+badge.addEventListener('click', () => host.act('hold'));
 
 function renderBadge() {
   const s = app?.session;
@@ -349,8 +350,8 @@ function renderBadge() {
   if (!s) return;
   const sec = Math.round(s.remaining / 1000);
   const time = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
-  const label = s.pause === 'paused' ? 'Paused' : s.kind === 'focus' ? 'Focus' : s.kind === 'long' ? 'Long break' : 'Break';
-  badge.className = 'badge ' + (s.pause === 'paused' ? 'paused' : s.kind === 'focus' ? 'focus' : 'brk');
+  const label = s.pause === 'paused' ? 'Paused' : s.held ? 'Timer paused' : s.kind === 'focus' ? 'Focus' : s.kind === 'long' ? 'Long break' : 'Break';
+  badge.className = 'badge ' + (s.pause === 'paused' || s.held ? 'paused' : s.kind === 'focus' ? 'focus' : 'brk');
   badge.innerHTML = `<small>${label}</small><b>${time}</b>`;
 }
 

@@ -233,3 +233,28 @@ test('dev build: instant pause, free quit, closing is not a quit', () => {
   assert.equal(s.streak, 3);
   assert.equal(s.ledger.length, 0);
 });
+
+test('clicking the timer stops it but keeps blocking on, even in a break', () => {
+  const s = fresh();
+  E.start(s, {}, T0);
+  E.hold(s, T0 + 5 * MIN);
+  assert.equal(E.sessionView(s, T0 + 40 * MIN).remaining, 20 * MIN);
+  assert.deepEqual(E.tick(s, T0 + 40 * MIN), []);
+  assert.equal(E.isBlocked(s, 'youtube.com', T0 + 40 * MIN), true);
+  E.unhold(s, T0 + 40 * MIN);
+  assert.equal(E.sessionView(s, T0 + 45 * MIN).remaining, 15 * MIN);
+  // into the break: holding turns blocks on
+  E.tick(s, T0 + 61 * MIN);
+  assert.equal(E.sessionView(s, T0 + 61 * MIN).phase.kind, 'break');
+  assert.equal(E.isBlocked(s, 'youtube.com', T0 + 61 * MIN), false);
+  E.hold(s, T0 + 61 * MIN);
+  assert.equal(E.isBlocked(s, 'youtube.com', T0 + 70 * MIN), true);
+  assert.equal(E.sessionView(s, T0 + 70 * MIN).remaining, 4 * MIN);
+  // a held timer can't also take a full pause
+  E.unhold(s, T0 + 70 * MIN);
+  E.tick(s, T0 + 75 * MIN);
+  E.requestPause(s, T0 + 76 * MIN);
+  E.tick(s, T0 + 78 * MIN);
+  assert.equal(E.sessionView(s, T0 + 78 * MIN).pause, 'paused');
+  assert.deepEqual(E.hold(s, T0 + 79 * MIN), []);
+});

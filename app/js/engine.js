@@ -111,7 +111,7 @@ export function sessionView(state, now) {
   const s = state.session;
   if (!s) return null;
   const phase = s.plan[s.phaseIndex];
-  const pausedFor = s.pausedAt ? now - s.pausedAt : 0;
+  const pausedFor = (s.pausedAt ? now - s.pausedAt : 0) + (s.heldAt ? now - s.heldAt : 0);
   const elapsed = Math.max(0, now - s.phaseStartedAt - s.phasePausedMs - pausedFor);
   const remaining = Math.max(0, phase.ms - elapsed);
   const focusTotal = s.plan.filter((p) => p.kind === 'focus').length;
@@ -127,6 +127,7 @@ export function sessionView(state, now) {
     focusIndex,
     focusTotal,
     pause,
+    held: Boolean(s.heldAt), // timer stopped by a click, blocking still on
     pauseStartsIn: s.pauseRequestedAt ? Math.max(0, s.pauseRequestedAt + RULES.pauseWaitMs - now) : 0,
     pauseEndsIn: s.pausedAt ? Math.max(0, s.pausedAt + RULES.pauseMaxMs - now) : 0,
     sessionRemaining: remaining + s.plan.slice(s.phaseIndex + 1).reduce((a, p) => a + p.ms, 0),
@@ -139,7 +140,7 @@ export function blocking(state, now) {
   const v = sessionView(state, now);
   if (!v) return { on: false };
   if (v.pause === 'paused') return { on: false, why: 'paused' };
-  if (v.phase.kind !== 'focus' && !state.settings.blockBreaks) return { on: false, why: 'break' };
+  if (v.phase.kind !== 'focus' && !state.settings.blockBreaks && !v.held) return { on: false, why: 'break' };
   return { on: true, why: 'session', profile: getProfile(state, state.session.profileId) };
 }
 
@@ -220,7 +221,7 @@ export function tick(state, now) {
     events.push({ type: 'lockoutEnded' });
   }
   const s = state.session;
-  if (!s) return events;
+  if (!s || s.heldAt) return events; // a held timer doesn't move
 
   for (let guard = 0; guard < 100; guard++) {
     // a requested pause takes effect after the wait, if still in the same focus phase
@@ -322,6 +323,22 @@ export function resume(state, now) {
   s.phasePausedMs += now - s.pausedAt;
   s.pausedAt = null;
   return [{ type: 'resumed', auto: false }];
+}
+
+/** Stop the timer (clicking it). Blocking stays on, even in a break, until it's started again. */
+export function hold(state, now) {
+  const s = state.session;
+  if (!s || s.heldAt || s.pausedAt) return [];
+  s.heldAt = now;
+  return [{ type: 'held' }];
+}
+
+export function unhold(state, now) {
+  const s = state.session;
+  if (!s || !s.heldAt) return [];
+  s.phasePausedMs += now - s.heldAt;
+  s.heldAt = null;
+  return [{ type: 'unheld' }];
 }
 
 /** Quit the session. Applies the lockout and debt unless a pardon is spent. */
