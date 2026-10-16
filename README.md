@@ -9,6 +9,7 @@ A focus timer and distraction blocker for students. Pick a session type, say wha
 - **Sidebar.** Notion-style navigation on the left with the status and a mini music player. Hide it with the button or Ctrl+\\.
 - **Blocking.** Apps and websites per session type, plus an always-allowed list. Windows, Settings, Task Manager and Togami are never blocked. Breaks are unblocked unless you turn on *Block during breaks*.
 - **Pausing.** Press Pause and blocking keeps running for 2 more minutes, then stops for up to 10 minutes. Only during focus time.
+- **Pausing just the timer.** Click the timer (or the pet's timer badge) to stop it straight away; click again to carry on. Blocking stays on the whole time, even if you stop it during a break.
 - **Quitting.** Hold a button for 5 seconds, type a sentence, wait 60 seconds, then see the cost. You can back out at every step.
 - **Penalties for quitting:**
   - **Lockout.** Blocks stay on for 10, then 25, then 45 minutes for each quit in a week.
@@ -23,7 +24,7 @@ A focus timer and distraction blocker for students. Pick a session type, say wha
 - **Now playing.** The current track with play/pause/skip.
 - **Jingles and notifications.** A short chime when focus starts, a break starts, a break ends and the session finishes (one at a time), plus a Windows notification when Togami isn't in front. Both can be turned off in Settings.
 - **Runs in the background.** Closing the window hides Togami to the tray: the timer, blocking, jingles and the pet keep going. Click the tray icon to bring it back; quit from the tray menu (it asks first during a session, since that counts as quitting). Opening Togami again brings back the running copy.
-- **Automatic updates.** Installed copies check GitHub releases on launch and every few hours, and offer *Restart and update* when no session or lockout is running.
+- **Automatic updates.** Installed copies check GitHub releases on launch and every few hours. A new version is required: once no session or lockout is running, a full-window screen blocks Togami until it's installed (*Install and restart*).
 - **Voices.** Neutral, or *Heir*: cold and superior.
 - **Desktop pet.** Import a pet pack and a character sits in the corner of your desktop in a Persona-style cut-in card. It reacts to focus starts, breaks, blocked sites, pauses, quits, lockouts, pardons and updates with its own lines, blinks, and nags you now and then when no session runs. Drag it anywhere, click it, or right-click for *Start focus* (pick a session type), *Open Togami*, *Talk*, *Turn around* and *Hide*. While a session runs, a timer badge sits on its card. Clicks pass through everything except the pet. Settings → Desktop pet.
 
