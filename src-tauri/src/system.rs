@@ -1,4 +1,4 @@
-// Windows notifications and self-updates.
+// Notifications, self-updates and (macOS) the Accessibility permission.
 //
 // Updates come from GitHub releases: the app reads latest.json from the newest
 // release, and if it lists a newer version, downloads that installer, checks
@@ -44,4 +44,23 @@ pub async fn update_install(app: AppHandle, pending: State<'_, PendingUpdate>) -
     let update = pending.0.lock().unwrap().take().ok_or("No update has been found yet.")?;
     update.download_and_install(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
     app.restart();
+}
+
+/// macOS: may Togami use Accessibility (tab titles, closing tabs)? None elsewhere.
+#[tauri::command]
+pub fn access_status() -> Option<bool> {
+    #[cfg(target_os = "macos")]
+    return Some(crate::macos::trusted(false));
+    #[cfg(not(target_os = "macos"))]
+    None
+}
+
+/// macOS: asks for Accessibility, or opens its page in System Settings if
+/// macOS has asked before (it only shows its own question once).
+#[tauri::command]
+pub fn access_request() {
+    #[cfg(target_os = "macos")]
+    if !crate::macos::trusted(true) {
+        let _ = std::process::Command::new("/usr/bin/open").arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility").spawn();
+    }
 }

@@ -1,10 +1,12 @@
 // Blocking. The UI sends the current lists (only while blocking is on). A
-// background thread checks the foreground window a few times a second:
+// background thread checks the window in front a few times a second:
 //   - a blocked app is asked to close
-//   - a browser tab on a blocked site gets 5 seconds (with a Windows
-//     notification) to be closed, then Togami closes it (Ctrl+W). A tab counts
-//     if its address (read from the address bar with UI Automation; any page
-//     or subdomain) or its title names a blocked site. Chrome, Edge, Firefox.
+//   - a browser tab on a blocked site gets 5 seconds (with a notification) to
+//     be closed, then Togami closes it (Ctrl+W, or ⌘W on macOS). A tab counts
+//     if its address (any page or subdomain) or its title names a blocked site.
+//     Windows: Chrome, Edge, Firefox; the address bar is read with UI Automation.
+//     macOS: Safari, Chrome, Edge, Brave, Arc (address read with AppleScript)
+//     and Firefox (address bar read with Accessibility).
 // Then Togami comes to the front and the UI shows its block screen.
 
 use crate::rules::{is_browser, match_target};
@@ -13,8 +15,13 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 use tauri_plugin_notification::NotificationExt;
+
+#[cfg(target_os = "macos")]
+use mac as os;
+#[cfg(windows)]
+use win as os;
 
 #[derive(Default, Clone, Deserialize, Debug)]
 pub struct Config {
@@ -66,7 +73,7 @@ const GRACE: Duration = Duration::from_secs(5);
 const GRACE_COOLDOWN: Duration = Duration::from_secs(30);
 
 struct Grace {
-    hwnd: isize,
+    window: isize,
     target: String,
     since: Instant,
 }
@@ -78,8 +85,10 @@ pub fn start(app: AppHandle) {
         let mut last_emit: Option<(String, Instant)> = None;
         let mut grace: Option<Grace> = None;
         let mut recent: HashMap<String, Instant> = HashMap::new();
-        #[cfg(windows)]
-        let mut address_bar = win::AddressBar::new();
+        #[cfg(any(windows, target_os = "macos"))]
+        let mut address_bar = os::AddressBar::new();
+        #[cfg(target_os = "macos")]
+        let mut asked_access = false;
         loop {
             std::thread::sleep(Duration::from_millis(400));
             let cfg = shared.lock().unwrap().clone();
@@ -87,10 +96,16 @@ pub fn start(app: AppHandle) {
                 grace = None;
                 continue;
             }
-            #[cfg(windows)]
+            // macOS: tab titles and closing tabs need Accessibility; ask once per run
+            #[cfg(target_os = "macos")]
+            if !asked_access && !cfg.sites.is_empty() {
+                asked_access = true;
+                crate::macos::trusted(true);
+            }
+            #[cfg(any(windows, target_os = "macos"))]
             {
-                let hit = win::foreground().and_then(|fg| {
-                    let url = if is_browser(&fg.exe) && !cfg.sites.is_empty() { address_bar.as_mut().and_then(|a| a.read(fg.hwnd)) } else { None };
+                let hit = os::foreground().and_then(|fg| {
+                    let url = if is_browser(&fg.exe) && !cfg.sites.is_empty() { address_bar.as_mut().and_then(|a| a.read(&fg)) } else { None };
                     let found = match_target(&cfg.apps, &cfg.sites, &fg.exe, &fg.title, url.as_deref());
                     *seen.lock().unwrap() = Some(Seen { exe: fg.exe.clone(), title: fg.title.clone(), url, target: found.as_ref().map(|f| f.0.clone()) });
                     found.map(|(t, k)| (fg, t, k))
@@ -102,11 +117,11 @@ pub fn start(app: AppHandle) {
                     }
                     continue;
                 };
-                let hwnd = fg.hwnd.0 as isize;
+                let window = fg.key();
                 let mut warned = false;
                 if kind == "site" {
                     match &grace {
-                        Some(g) if g.hwnd == hwnd && g.target == target => {
+                        Some(g) if g.window == window && g.target == target => {
                             if g.since.elapsed() < GRACE {
                                 continue; // still counting down
                             }
@@ -119,7 +134,7 @@ pub fn start(app: AppHandle) {
                             }
                             let fresh = recent.get(&target).is_none_or(|t| t.elapsed() >= GRACE_COOLDOWN);
                             if fresh {
-                                grace = Some(Grace { hwnd, target: target.clone(), since: Instant::now() });
+                                grace = Some(Grace { window, target: target.clone(), since: Instant::now() });
                                 let _ = app
                                     .notification()
                                     .builder()
@@ -133,7 +148,7 @@ pub fn start(app: AppHandle) {
                     }
                     recent.insert(target.clone(), Instant::now());
                 }
-                win::push_away(&fg, kind);
+                os::push_away(&fg, kind);
                 let again = last_emit.as_ref().is_some_and(|(t, at)| *t == target && at.elapsed() < Duration::from_millis(1500));
                 if !again {
                     last_emit = Some((target.clone(), Instant::now()));
@@ -145,7 +160,7 @@ pub fn start(app: AppHandle) {
                     let _ = app.emit("blocked-attempt", Attempt { target, kind, stage: "block", warned });
                 }
             }
-            #[cfg(not(windows))]
+            #[cfg(not(any(windows, target_os = "macos")))]
             let _ = (&cfg, &mut last_emit, &mut grace, &mut recent, &app, &seen);
         }
     });
@@ -172,6 +187,13 @@ mod win {
         pub hwnd: HWND,
         pub exe: String,
         pub title: String,
+    }
+
+    impl Foreground {
+        /// Tells windows apart for the grace period.
+        pub fn key(&self) -> isize {
+            self.hwnd.0 as isize
+        }
     }
 
     pub fn foreground() -> Option<Foreground> {
@@ -232,7 +254,8 @@ mod win {
             }
         }
 
-        pub fn read(&mut self, hwnd: HWND) -> Option<String> {
+        pub fn read(&mut self, fg: &Foreground) -> Option<String> {
+            let hwnd = fg.hwnd;
             let key = hwnd.0 as isize;
             if let Some((k, el)) = &self.cached {
                 if *k == key {
@@ -283,5 +306,135 @@ mod win {
             let keys = [key(VK_CONTROL, false), key(w, false), key(w, true), key(VK_CONTROL, true)];
             SendInput(&keys, std::mem::size_of::<INPUT>() as i32);
         }
+    }
+}
+
+// ---------- macOS ----------
+
+#[cfg(target_os = "macos")]
+mod mac {
+    use crate::macos::{self, Cf};
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+
+    pub struct Foreground {
+        pub pid: i32,
+        pub exe: String,
+        pub title: String,
+    }
+
+    impl Foreground {
+        /// Tells apps apart for the grace period.
+        pub fn key(&self) -> isize {
+            self.pid as isize
+        }
+    }
+
+    /// The app in front, by its bundle name ("Google Chrome", "Discord"), and
+    /// its focused window's title (empty without Accessibility).
+    pub fn foreground() -> Option<Foreground> {
+        let pid = macos::frontmost_pid()?;
+        if pid as u32 == std::process::id() {
+            return None;
+        }
+        let exe = macos::app_name(pid)?;
+        let title = macos::focused_window(pid).and_then(|w| macos::ax_text(&w, "AXTitle")).unwrap_or_default();
+        Some(Foreground { pid, exe, title })
+    }
+
+    /// The front tab in AppleScript, for browsers that can be asked for it.
+    /// Others (Firefox and its forks) have their address bar read with Accessibility.
+    fn scripted_tab(exe: &str) -> Option<&'static str> {
+        match exe {
+            "Safari" | "Safari Technology Preview" => Some("current tab of front window"),
+            "Google Chrome" | "Google Chrome Beta" | "Google Chrome Canary" | "Chromium" | "Microsoft Edge" | "Microsoft Edge Beta" | "Brave Browser" | "Vivaldi" | "Arc" => {
+                Some("active tab of front window")
+            }
+            _ => None,
+        }
+    }
+
+    fn tell(exe: &str, what: &str) -> String {
+        format!("tell application \"{}\" to {what}", exe.replace('"', ""))
+    }
+
+    /// An address is re-read when the tab title changes, or after this long.
+    const REREAD: Duration = Duration::from_millis(1500);
+    /// After AppleScript was refused (or timed out), wait this long before asking that browser again.
+    const RETRY: Duration = Duration::from_secs(60);
+    /// The first AppleScript to a browser waits for the user to answer macOS's question.
+    const ASK_TIMEOUT: Duration = Duration::from_secs(20);
+
+    /// Reads the address of the tab in front.
+    pub struct AddressBar {
+        last: Option<(i32, String, Instant, Option<String>)>,
+        refused: HashMap<String, Instant>,
+        field: Option<(Cf, Cf)>,
+    }
+
+    impl AddressBar {
+        pub fn new() -> Option<Self> {
+            Some(Self { last: None, refused: HashMap::new(), field: None })
+        }
+
+        pub fn read(&mut self, fg: &Foreground) -> Option<String> {
+            let Some(tab) = scripted_tab(&fg.exe) else { return self.read_field(fg) };
+            if let Some((pid, title, at, url)) = &self.last {
+                if *pid == fg.pid && *title == fg.title && at.elapsed() < REREAD {
+                    return url.clone();
+                }
+            }
+            if self.refused.get(&fg.exe).is_some_and(|t| t.elapsed() < RETRY) {
+                return None;
+            }
+            let url = match macos::osascript(&tell(&fg.exe, &format!("get URL of {tab}")), ASK_TIMEOUT) {
+                Ok(u) => Some(u),
+                Err(_) => {
+                    self.refused.insert(fg.exe.clone(), Instant::now());
+                    None
+                }
+            };
+            self.last = Some((fg.pid, fg.title.clone(), Instant::now(), url.clone()));
+            url
+        }
+
+        /// Firefox exposes its address bar with the id "urlbar-input". Found once
+        /// per window, then re-read on each check.
+        fn read_field(&mut self, fg: &Foreground) -> Option<String> {
+            let window = macos::focused_window(fg.pid)?;
+            if let Some((w, field)) = &self.field {
+                if w.same(&window) {
+                    if let Some(v) = macos::ax_text(field, "AXValue") {
+                        return Some(v);
+                    }
+                }
+            }
+            self.field = None;
+            let field = macos::find_text_field(&window, |el| macos::ax_text(el, "AXDOMIdentifier").as_deref() == Some("urlbar-input"), 800)?;
+            let v = macos::ax_text(&field, "AXValue");
+            self.field = Some((window, field));
+            v
+        }
+    }
+
+    const KEY_W: u16 = 13; // kVK_ANSI_W
+
+    /// Blocked app: hide it and ask it to quit. Blocked site: close the tab
+    /// (with AppleScript where the browser allows it, otherwise ⌘W), which also
+    /// stops a playing video; only while that browser is still in front.
+    pub fn push_away(fg: &Foreground, kind: &str) {
+        if kind == "app" {
+            macos::hide_and_quit(fg.pid);
+            return;
+        }
+        if macos::frontmost_pid() != Some(fg.pid) {
+            return;
+        }
+        if let Some(tab) = scripted_tab(&fg.exe) {
+            if macos::osascript(&tell(&fg.exe, &format!("close {tab}")), Duration::from_secs(3)).is_ok() {
+                return;
+            }
+        }
+        macos::command_key(fg.pid, KEY_W);
     }
 }

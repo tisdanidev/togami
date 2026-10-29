@@ -1,15 +1,23 @@
 // Pure rules shared by the native code: which window counts as a blocked
-// app or site, and readable names for media sources. No Windows APIs here, so
+// app or site, and readable names for media sources. No system APIs here, so
 // it is tested on any OS:  rustc --edition 2021 --test src/rules.rs
+//
+// "exe" is the executable's name on Windows ("chrome") and the app bundle's
+// name on macOS ("Google Chrome").
 
 /// Processes that are never touched, whatever the lists say.
 const NEVER: &[&str] = &[
-    "togami", "explorer", "taskmgr", "systemsettings", "searchhost", "searchapp", "startmenuexperiencehost",
+    "togami", "togamidev", "explorer", "taskmgr", "systemsettings", "searchhost", "searchapp", "startmenuexperiencehost",
     "shellexperiencehost", "lockapp", "dwm", "winlogon", "applicationframehost", "textinputhost",
+    // macOS
+    "finder", "dock", "systempreferences", "loginwindow", "controlcenter", "spotlight", "activitymonitor", "notificationcenter", "securityagent",
 ];
 
 const BROWSERS: &[&str] = &[
     "chrome", "msedge", "firefox", "brave", "opera", "operagx", "vivaldi", "arc", "librewolf", "waterfox", "chromium", "zen", "floorp", "iexplore",
+    // macOS
+    "safari", "safaritechnologypreview", "googlechrome", "googlechromebeta", "googlechromecanary", "microsoftedge", "microsoftedgebeta", "bravebrowser",
+    "firefoxdeveloperedition", "firefoxnightly", "zenbrowser", "orion",
 ];
 
 const BROWSER_NAMES: &[&str] = &[
@@ -327,6 +335,33 @@ mod tests {
         assert!(m(&cfg(), "msedge", "Home / X - Microsoft Edge").is_some());
         assert!(m(&cfg(), "msedge", "Box of examples - Microsoft Edge").is_none());
         assert!(m(&cfg(), "chrome", "History essay - Google Docs - Google Chrome").is_none());
+    }
+
+    #[test]
+    fn macos_apps_and_browsers() {
+        assert_eq!(m(&cfg(), "Discord", "#general").unwrap().0, "Discord");
+        assert_eq!(m(&cfg(), "steam_osx", "Steam").unwrap().0, "Steam");
+        assert_eq!(m(&cfg(), "Epic Games Launcher", "").unwrap().0, "Epic Games");
+        for b in ["Safari", "Google Chrome", "Microsoft Edge", "Brave Browser", "Firefox", "Arc"] {
+            assert!(is_browser(b), "{b}");
+        }
+        // macOS window titles carry no browser name
+        assert_eq!(m(&cfg(), "Safari", "Funny cats - YouTube").unwrap().0, "youtube.com");
+        assert!(m(&cfg(), "Google Chrome", "r/learnprogramming").is_some());
+        assert!(m(&cfg(), "Firefox", "Rust tips").is_none());
+        assert!(m(&cfg(), "Google Chrome", "History essay - Google Docs").is_none());
+        assert_eq!(mu(&cfg(), "Safari", "", "https://m.youtube.com/watch?v=1").unwrap().0, "youtube.com");
+        assert!(mu(&cfg(), "Microsoft Edge", "Untitled", "docs.google.com/document/d/1").is_none());
+        assert!(m(&cfg(), "TextEdit", "youtube.txt").is_none());
+    }
+
+    #[test]
+    fn macos_system_apps_are_never_blocked() {
+        let mut c = cfg();
+        c.apps.extend(["Finder".into(), "System Settings".into(), "Activity Monitor".into(), "Dock".into()]);
+        for exe in ["Finder", "System Settings", "Activity Monitor", "Dock", "Togami Dev"] {
+            assert!(m(&c, exe, "").is_none(), "{exe}");
+        }
     }
 
     #[test]

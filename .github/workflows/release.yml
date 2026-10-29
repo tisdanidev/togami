@@ -1,7 +1,11 @@
-# Build Togami on Windows and publish a GitHub release, either by pushing a
-# tag like v0.2.0 or with "Run workflow" on the Actions tab (the release and
-# its v<version> tag are then created from the version in tauri.conf.json). The release includes latest.json and a signed installer, which is
-# what installed copies of Togami check to update themselves.
+# Build Togami for Windows and macOS and publish a GitHub release, either by
+# pushing a tag like v0.2.0 or with "Run workflow" on the Actions tab (the
+# release and its v<version> tag are then created from the version in
+# tauri.conf.json). The release includes latest.json and signed updates,
+# which is what installed copies of Togami check to update themselves.
+#
+# The macOS job runs after the Windows one, so the two don't write latest.json
+# at the same time; it builds one universal app (Apple Silicon and Intel).
 #
 # Needs one repository secret: TAURI_SIGNING_PRIVATE_KEY (the updater key).
 name: Release
@@ -13,6 +17,14 @@ on:
 
 permissions:
   contents: write
+
+env:
+  RELEASE_BODY: |
+    **Windows:** download **Togami_*_x64-setup.exe** below and run it. Windows may show "Windows protected your PC" because the app isn't code-signed yet: click **More info → Run anyway**.
+
+    **macOS 11 or later** (Apple Silicon and Intel): download **Togami_*_universal.dmg**, open it and drag Togami to Applications. The app isn't notarized by Apple yet, so the first time, open it, then go to **System Settings → Privacy & Security** and click **Open Anyway**. To block sites, allow Togami under **Privacy & Security → Accessibility** when it asks.
+
+    Installed copies update themselves from now on.
 
 jobs:
   windows:
@@ -49,10 +61,46 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: Togami v__VERSION__
-          releaseBody: |
-            Download **Togami_*_x64-setup.exe** below and run it. Windows may show "Windows protected your PC" because the app isn't code-signed yet: click **More info → Run anyway**.
+          releaseBody: ${{ env.RELEASE_BODY }}
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
 
-            Installed copies update themselves from now on.
+  macos:
+    needs: windows
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - run: npm ci
+
+      - name: Blocking rule tests
+        run: rustc --edition 2021 --test src-tauri/src/rules.rs -o rules-test.exe && ./rules-test.exe
+
+      - name: Build, sign and publish
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+        with:
+          args: --target universal-apple-darwin
+          tagName: v__VERSION__
+          releaseName: Togami v__VERSION__
+          releaseBody: ${{ env.RELEASE_BODY }}
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true

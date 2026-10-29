@@ -1,0 +1,43 @@
+# Checks that a pull request builds on Windows and macOS and that the tests
+# pass. Nothing is signed or published (see release.yml for that).
+name: Check
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - run: npm ci
+
+      - name: Session rule tests
+        run: npm test
+
+      - name: Blocking rule tests
+        shell: bash
+        run: rustc --edition 2021 --test src-tauri/src/rules.rs -o rules-test.exe && ./rules-test.exe
+
+      - name: Build the app (no bundle)
+        run: npx tauri build --no-bundle
+
+      - name: Build Togami Dev (no bundle)
+        run: npx tauri build --no-bundle --config src-tauri/tauri.dev.conf.json

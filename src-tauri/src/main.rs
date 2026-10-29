@@ -1,12 +1,14 @@
 // Togami desktop shell. The UI lives in ../app; this adds what a web page
-// can't do: watching the foreground window to block apps and sites, and
-// reading what's playing from Windows' media controls, notifications,
-// updating itself from GitHub releases, the desktop pet window, and running
-// in the background with a tray icon.
+// can't do: watching the app in front to block apps and sites, reading
+// what's playing (Windows' media controls; Spotify and Music on macOS),
+// notifications, updating itself from GitHub releases, the desktop pet
+// window, and running in the background with a tray (menu bar) icon.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod blocker;
+#[cfg(target_os = "macos")]
+mod macos;
 mod media;
 mod pet;
 mod rules;
@@ -14,7 +16,7 @@ mod system;
 mod tray;
 
 fn main() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         // a second launch brings back the running Togami (it may be hidden in the tray)
         .plugin(tauri_plugin_single_instance::init(|app, _, _| pet::show_main(app.clone())))
         .plugin(tauri_plugin_notification::init())
@@ -39,6 +41,8 @@ fn main() {
             system::app_version,
             system::update_check,
             system::update_install,
+            system::access_status,
+            system::access_request,
             pet::pet_has_pack,
             pet::pet_pack,
             pet::pet_import,
@@ -48,7 +52,15 @@ fn main() {
             pet::pet_hit,
             pet::show_main,
             tray::app_exit
-        ])
-        .run(tauri::generate_context!())
-        .expect("Togami failed to start");
+        ]);
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(tray::app_menu).on_menu_event(tray::on_app_menu);
+    let app = builder.build(tauri::generate_context!()).expect("Togami failed to start");
+    app.run(|_app, _event| {
+        // macOS: clicking the Dock icon brings the window back (it may be hidden)
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = _event {
+            pet::show_main(_app.clone());
+        }
+    });
 }

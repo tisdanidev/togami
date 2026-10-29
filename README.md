@@ -51,7 +51,7 @@ npm test         # session and penalty rules
 npm run build    # dist/togami.html, a single-file browser test build
 ```
 
-The browser version simulates Windows. Its **Test bench** button (bottom right) speeds up the clock, fakes opening blocked apps and sites, and fakes closing Togami.
+The browser version simulates the desktop app. Its **Test bench** button (bottom right) speeds up the clock, fakes opening blocked apps and sites, and fakes closing Togami.
 
 ## Windows app
 
@@ -79,6 +79,29 @@ npx tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
 
 Native rule tests: `rustc --edition 2021 --test src-tauri/src/rules.rs -o rules-test && ./rules-test`
 
+## macOS app
+
+The same Tauri app also builds for **macOS 11 Big Sur or later** (one universal app for Apple Silicon and Intel; the floor comes from the Safari features the UI uses). The macOS parts live next to the Windows ones (`src-tauri/src/macos.rs` plus a `mac` module in `blocker.rs` and `media.rs`):
+
+- **App blocking:** the app in front comes from NSWorkspace, named after its bundle ("Discord", "Google Chrome"). A blocked app is hidden and asked to quit. This needs no permission.
+- **Website blocking:** Safari, Chrome, Edge, Brave, Vivaldi and Arc have the front tab's address read with AppleScript, and the tab is closed the same way. macOS asks once per browser whether Togami may control it. In Firefox, the address bar is read with Accessibility and the tab is closed with ⌘W. Tab titles also count, as on Windows. Titles, Firefox and ⌘W need **Accessibility** (System Settings → Privacy & Security → Accessibility). Togami asks for it at the first session that blocks sites, and Settings → Permissions shows whether it has it. The same 5-second grace period and 30-second cooldown apply.
+- **Never touched:** Finder, the Dock, System Settings, Activity Monitor, Control Center, Spotlight and Togami itself.
+- **Now playing:** Spotify (with artwork) and Apple Music, through their AppleScript interfaces. macOS keeps its system-wide "now playing" to Apple's own apps since 15.4, so browser audio doesn't show up.
+- **Background:** closing the window hides Togami; the menu bar icon or the Dock icon brings it back. ⌘Q asks first during a session, like Quit in the tray menu. App Nap is off (`NSAppSleepDisabled`), and the windows aren't throttled in the background (`backgroundThrottling`, macOS 14+). Earlier versions rely on the native heartbeat.
+- **Full screen** with ⌃⌘F (or the green button). The pet shows on every Space.
+
+Build on a Mac (needs Rust, Node and Xcode's command line tools):
+
+```bash
+npm ci
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+npx tauri build --target universal-apple-darwin    # .app and .dmg under src-tauri/target/universal-apple-darwin/release/bundle/
+```
+
+`src-tauri/tauri.macos.conf.json` (merged automatically on macOS) sets the bundle targets, the minimum version and ad-hoc signing; `Info.plist` and `Entitlements.plist` add the AppleScript permission text and switch App Nap off.
+
+The app is ad-hoc signed, not notarized. On first launch, macOS asks the user to confirm it in System Settings → Privacy & Security (**Open Anyway**). Because an ad-hoc signature changes with every build, macOS may ask for Accessibility again after an update. Signing with an Apple Developer ID and notarizing would remove both. tauri-action does that when the `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD` and `APPLE_TEAM_ID` secrets are passed to it.
+
 ### Togami Dev (test build)
 
 A separate app for trying things out without consequences:
@@ -101,13 +124,13 @@ Bump the version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.
 git tag v0.2.1 && git push origin v0.2.1
 ```
 
-Or run the **Release** workflow from the Actions tab: it tags `v<version>` itself. `.github/workflows/release.yml` builds on Windows, runs the tests, signs the update with the `TAURI_SIGNING_PRIVATE_KEY` repository secret and publishes the release with `latest.json`. Installed copies pick it up automatically. Keep the private key safe: without it, existing installs can't receive updates.
+Or run the **Release** workflow from the Actions tab: it tags `v<version>` itself. `.github/workflows/release.yml` builds on Windows and then macOS (universal), runs the tests, signs the update with the `TAURI_SIGNING_PRIVATE_KEY` repository secret and publishes the release with `latest.json`. Installed copies pick it up automatically. Keep the private key safe: without it, existing installs can't receive updates.
 
 ### Known limits
 
-- Site blocking is tested against Chrome, Edge and Firefox. In other browsers it relies on window titles, which can miss pages that don't name the site.
+- Site blocking is tested against Chrome, Edge and Firefox (plus Safari, Brave and Arc on macOS). In other browsers it relies on window titles, which can miss pages that don't name the site.
 - Togami Dev's test bench shows what the blocker sees in front (program, title, address), which helps when a site slips through.
-- Blocking only applies while Togami is running. Closing the window keeps it running in the tray; quitting it mid-session counts as quitting.
+- Blocking only applies while Togami is running. Closing the window keeps it running in the tray (menu bar on macOS); quitting it mid-session counts as quitting.
 
 ## Layout
 
@@ -115,7 +138,7 @@ Or run the **Release** workflow from the Actions tab: it tags `v<version>` itsel
 | --- | --- |
 | `app/js/engine.js` | All session, pause, penalty and ledger rules. Pure functions, tested in `test/engine.test.js` |
 | `app/js/platform.js` | Bridge to the native code (blocking, media, full screen); simulated in the browser |
-| `src-tauri/` | Windows app: `blocker.rs` (foreground window watcher), `media.rs` (now playing), `system.rs` (notifications, updates), `rules.rs` (matching rules, tested) |
+| `src-tauri/` | Desktop app: `blocker.rs` (foreground window watcher), `media.rs` (now playing), `system.rs` (notifications, updates, macOS permissions), `rules.rs` (matching rules, tested), `macos.rs` (macOS system calls) |
 | `app/js/sounds.js` | The four jingles, synthesised with Web Audio |
 | `app/fonts/` | Bundled Newsreader and IBM Plex (SIL Open Font License) |
 | `app/js/main.js` | UI |

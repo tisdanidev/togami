@@ -1,17 +1,27 @@
-// Windows integration lives behind this file. In the desktop app (Tauri) these
-// call the native code in src-tauri/; in the browser test build everything is
-// simulated so the app can be tried without Windows.
-//   blocker  -> native thread watches the foreground window, closes blocked
-//               apps, closes browser tabs on blocked sites (Chrome, Edge, Firefox)
-//   media    -> Windows media controls (Spotify, browsers and other players)
-//   window   -> F11 full screen
-//   notify / updater -> Windows notifications, self-update from GitHub releases
+// Windows and macOS integration lives behind this file. In the desktop app
+// (Tauri) these call the native code in src-tauri/; in the browser test build
+// everything is simulated so the app can be tried without either.
+//   blocker  -> native thread watches the app in front, closes blocked apps,
+//               closes browser tabs on blocked sites (Chrome, Edge, Firefox;
+//               Safari, Brave and Arc on macOS)
+//   media    -> Windows media controls (Spotify, browsers and other players),
+//               or Spotify and Music on macOS
+//   window   -> F11 (⌃⌘F on macOS) full screen
+//   notify / updater -> notifications, self-update from GitHub releases
+//   access   -> macOS: the Accessibility permission the blocker needs for sites
 //   pet      -> the desktop pet window (pet.html), from an imported pet pack
 
 const T = globalThis.__TAURI__;
 export const isNative = Boolean(T);
 /** "Togami Dev": the test build (tauri.dev.conf.json opens index.html?flavor=dev). */
 export const isDev = isNative && new URLSearchParams(location.search).get('flavor') === 'dev';
+/** Running on a Mac (the macOS app, or the browser build opened on a Mac). */
+export const isMac = /Mac/.test(globalThis.navigator?.platform || globalThis.navigator?.userAgent || '');
+
+/** Words that differ between Windows and macOS. */
+export const OS = isMac
+  ? { name: 'macOS', fullscreen: '⌃⌘F', tray: 'menu bar', notifications: 'Notifications', builtIn: ['Finder', 'System Settings', 'Activity Monitor', 'Togami'] }
+  : { name: 'Windows', fullscreen: 'F11', tray: 'tray', notifications: 'Windows notifications', builtIn: ['Windows', 'Settings', 'Task Manager', 'Togami'] };
 
 // ---------- blocker ----------
 
@@ -51,7 +61,7 @@ if (isNative) {
 // ---------- window ----------
 
 export const appWindow = {
-  /** F11: full screen on or off. Never switched on automatically. */
+  /** F11 (⌃⌘F on macOS): full screen on or off. Never switched on automatically. */
   async toggleFullscreen() {
     try {
       if (isNative) {
@@ -69,7 +79,7 @@ export const appWindow = {
 
 // ---------- notifications ----------
 
-/** A Windows notification (desktop app) or a browser notification if allowed. */
+/** A system notification (desktop app) or a browser notification if allowed. */
 export function notify(title, body) {
   if (isNative) {
     T.core.invoke('notify', { title, body }).catch(() => {});
@@ -193,9 +203,21 @@ if (isNative) {
   });
 }
 
+// ---------- Accessibility (macOS app) ----------
+
+// Reading tab titles and closing tabs needs Accessibility on macOS. Blocking apps,
+// and reading addresses in Safari and Chromium browsers, works without it.
+export const access = {
+  needed: isNative && isMac,
+  /** true or false on macOS, null elsewhere. */
+  granted: () => (isNative ? T.core.invoke('access_status').catch(() => null) : Promise.resolve(null)),
+  /** Asks macOS, or opens its Accessibility settings. */
+  request: () => isNative && T.core.invoke('access_request').catch(() => {}),
+};
+
 // ---------- background (desktop app) ----------
 
-// Closing the window only hides Togami; the tray icon reopens or quits it.
+// Closing the window only hides Togami; the tray (menu bar) icon reopens or quits it.
 export const background = {
   /** Tray menu choices: "pet" (show or hide the pet) and "quit". */
   onTray(fn) {
