@@ -110,6 +110,14 @@ function browserPetFrame() {
   petFrame.className = 'pet-frame';
   petFrame.setAttribute('allowtransparency', 'true');
   document.body.append(petFrame);
+  // the pack sets the window size (pet.json "window")
+  fetch('packs/current/pet.json')
+    .then((r) => r.json())
+    .then(({ window: w }) => {
+      if (w?.width) petFrame.style.width = w.width + 'px';
+      if (w?.height) petFrame.style.height = w.height + 'px';
+    })
+    .catch(() => {});
   addEventListener('message', (e) => {
     if (e.source !== petFrame.contentWindow) return;
     if (e.data?.type === 'pet-hit') petRects = e.data.rects;

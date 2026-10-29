@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../app/', import.meta.url));
 const packs = fileURLToPath(new URL('../packs/', import.meta.url));
-const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json', '.webp': 'image/webp', '.png': 'image/png' };
+const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json', '.webp': 'image/webp', '.png': 'image/png', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf', '.otf': 'font/otf' };
 const port = Number(process.env.PORT) || 5173;
 
 createServer(async (req, res) => {
@@ -20,7 +20,7 @@ createServer(async (req, res) => {
   try {
     const body = await readFile(file);
     const type = types[extname(file)] || 'application/octet-stream';
-    res.writeHead(200, { 'content-type': type.startsWith('image/') ? type : type + '; charset=utf-8' }).end(body);
+    res.writeHead(200, { 'content-type': /^(image|font)\//.test(type) ? type : type + '; charset=utf-8' }).end(body);
   } catch {
     res.writeHead(404).end('Not found');
   }

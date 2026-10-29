@@ -1,13 +1,14 @@
 {
   "name": "togami",
   "private": true,
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "A focus timer and distraction blocker for students.",
   "type": "module",
   "scripts": {
     "dev": "node scripts/serve.mjs",
     "test": "node --test test/*.test.js",
     "build": "node scripts/build-artifact.mjs",
+    "check-pack": "node scripts/check-pack.mjs",
     "tauri": "tauri",
     "build:dev-app": "tauri build --config src-tauri/tauri.dev.conf.json"
   },

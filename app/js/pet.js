@@ -2,23 +2,27 @@
 // desktop app, or in an iframe in the browser build. Togami sends it moments
 // ("workStart", "block", ...); it picks a line for that moment from the pet
 // pack, switches expression (playing the expression's intro frames), and
-// types the line into the speech box. In between it blinks and breathes.
+// types the line into the speech box. In between it blinks.
 //
-// Pet pack (pet.json): { name, size, idle, expressions: { name: { intro: [files],
-// open, closed?, talk?: [files] } }, lines: { moment: [{ e: expression, t: text }] } }.
+// Togami has no pet look of its own: everything visual comes from the pack.
+// A pack is pet.json, style.css, layout.html and the frames and fonts they
+// use, all in one folder. See blank_pet/README.md for the format; in short:
+//
+// pet.json: { name, window?: { width, height }, timing?: { introFrame, type,
+//   punctuation, hold, holdPerChar }, nameHighlight?: { minLength: letters },
+//   idle, expressions: { name: { intro?: [files], open, closed? } },
+//   lines: { moment: [{ e: expression, t: text }] } }.
 // Lines can use {intention}, {min}, {target} and {version}.
+//
+// layout.html must have #card, #sprite (an img), #bubble and #text; #name,
+// #menu and #badge are optional. pet.js only toggles classes on them (see
+// README.md), so style.css decides how everything looks and moves.
 
 const T = globalThis.__TAURI__;
 const $ = (s) => document.querySelector(s);
-const card = $('#card');
-const sprite = $('#sprite');
-const bubble = $('#bubble');
-const text = $('#text');
-const menu = $('#menu');
-const bands = [$('#band'), $('#band2')];
+const stage = $('#stage');
 
-const INTRO_MS = 70;
-const TYPE_MS = 24;
+const TIMING = { introFrame: 70, type: 24, punctuation: 144, hold: 3200, holdPerChar: 55 };
 
 // Used when a pack has no lines for a moment.
 const FALLBACK = {
@@ -47,8 +51,8 @@ const FALLBACK = {
 const host = T
   ? {
       async load() {
-        const { manifest, files } = await T.core.invoke('pet_pack');
-        return { manifest, src: (f) => files[f] };
+        const { manifest, files, texts } = await T.core.invoke('pet_pack');
+        return { manifest, src: (f) => files[f] ?? null, text: async (f) => texts[f] ?? '' };
       },
       onSay: (fn) => T.event.listen('pet-say', (e) => fn(e.payload)),
       onState: (fn) => T.event.listen('pet-state', (e) => fn(e.payload)),
@@ -71,7 +75,15 @@ const host = T
       async load() {
         const r = await fetch('packs/current/pet.json');
         if (!r.ok) throw new Error('no pack');
-        return { manifest: await r.json(), src: (f) => 'packs/current/' + f };
+        return {
+          manifest: await r.json(),
+          // only plain file names next to pet.json, like the desktop app
+          src: (f) => (/^[\w.-]+$/.test(f) ? 'packs/current/' + f : null),
+          text: async (f) => {
+            const r = await fetch('packs/current/' + f);
+            return r.ok ? r.text() : '';
+          },
+        };
       },
       onSay: (fn) => addEventListener('message', (e) => e.data?.type === 'say' && fn(e.data)),
       onState: (fn) => addEventListener('message', (e) => e.data?.type === 'state' && fn(e.data.state)),
@@ -91,6 +103,8 @@ const host = T
 
 let pack = null;
 let src = null;
+let timing = TIMING;
+let card, sprite, bubble, text, menu, badge, speakers; // parts of the pack's layout
 let expr = null; // current expression name
 let busy = false; // playing intro frames
 let speaking = null; // { timer, typing }
@@ -105,16 +119,20 @@ boot();
 
 async function boot() {
   host.init();
+  let readText;
   try {
-    ({ manifest: pack, src } = await host.load());
+    ({ manifest: pack, src, text: readText } = await host.load());
   } catch {
     return; // no pack installed: nothing to show
   }
+  timing = { ...TIMING, ...pack.timing };
+  if (!(await mount(readText))) return;
   await preload();
-  $('#name').innerHTML = nameHtml(pack.name || 'Pet');
+  const name = $('#name');
+  if (name) name.innerHTML = nameHtml(pack.name || 'Pet');
   card.classList.toggle('flip', flipped);
   show(idleName(), false);
-  card.hidden = false;
+  stage.hidden = false;
   blinkLoop();
   setInterval(sendHit, 250);
   host.onSay(({ moment, vars }) => say(moment, vars));
@@ -127,15 +145,79 @@ async function boot() {
   setTimeout(() => say('hello'), 700);
 }
 
+// ---------- the pack's look: style.css and layout.html ----------
+
+/** Puts the pack's styles and layout in the window. False if the layout lacks a required part. */
+async function mount(readText) {
+  const [css, layout] = await Promise.all([readText('style.css'), readText('layout.html')]);
+  const style = document.createElement('style');
+  style.textContent = packCss(css);
+  document.head.append(style);
+  stage.append(packLayout(layout));
+
+  [card, sprite, bubble, text] = ['#card', '#sprite', '#bubble', '#text'].map((s) => $(s));
+  if (!card || !(sprite instanceof HTMLImageElement) || !bubble || !text) {
+    console.error('Pet pack layout.html needs #card, #sprite (an img), #bubble and #text.');
+    return false;
+  }
+  menu = $('#menu') || stage.appendChild(Object.assign(document.createElement('div'), { id: 'menu' }));
+  badge = $('#badge') || stage.appendChild(Object.assign(document.createElement('div'), { id: 'badge' }));
+  speakers = [...stage.querySelectorAll('[data-speak]')];
+  sprite.draggable = false;
+  text.setAttribute('aria-live', 'polite');
+  bubble.hidden = menu.hidden = badge.hidden = true;
+  wire();
+  return true;
+}
+
+/** The pack's CSS, with url()s pointing at the pack's own files or #ids in
+ *  the layout (anything else is dropped). */
+function packCss(css) {
+  return css.replace(/@import[^;]*;?/gi, '').replace(/url\(\s*(['"]?)(.*?)\1\s*\)/gi, (_, q, f) => {
+    const s = f.startsWith('#') ? f : src(f.replace(/^\.\//, ''));
+    return s ? `url("${s}")` : 'none';
+  });
+}
+
+// Layout elements a pack may use: plain HTML boxes and SVG shapes.
+const TAGS = new Set(
+  ('div span p b i em strong small br img svg g defs symbol use path polygon polyline rect circle ellipse line ' +
+    'text tspan lineargradient radialgradient stop clippath mask pattern filter fegaussianblur feoffset ' +
+    'feflood fecomposite femerge femergenode fecolormatrix title desc').split(' '),
+);
+
+/** The pack's layout.html as inert markup: no scripts, handlers or outside links. */
+function packLayout(html) {
+  const t = document.createElement('template');
+  t.innerHTML = html;
+  for (const el of [...t.content.querySelectorAll('*')]) {
+    if (!TAGS.has(el.localName.toLowerCase())) {
+      el.remove();
+      continue;
+    }
+    for (const { name, value } of [...el.attributes]) {
+      const n = name.toLowerCase();
+      if (n.startsWith('on') || n === 'srcset') el.removeAttribute(name);
+      else if (n === 'src' || n === 'href' || n === 'xlink:href') {
+        const v = value.trim();
+        const s = v.startsWith('#') && n !== 'src' ? v : src(v.replace(/^\.\//, ''));
+        if (s) el.setAttribute(name, s);
+        else el.removeAttribute(name);
+      } else if (n === 'style' && /url\(/i.test(value)) el.setAttribute(name, packCss(value));
+    }
+  }
+  return t.content;
+}
+
 function preload() {
   const files = new Set();
   for (const e of Object.values(pack.expressions)) {
-    for (const f of [...(e.intro || []), e.open, e.closed, ...(e.talk || [])]) if (f) files.add(f);
+    for (const f of [...(e.intro || []), e.open, e.closed]) if (f) files.add(f);
   }
   return Promise.all(
     [...files].map((f) => {
       const img = new Image();
-      img.src = src(f);
+      img.src = src(f) || '';
       return img.decode().catch(() => {});
     }),
   );
@@ -155,12 +237,13 @@ async function show(name, intro = true) {
   name = pack.expressions[name] ? name : idleName();
   if (name === expr && !intro) return;
   expr = name;
+  card.dataset.expression = name;
   busy = false;
   if (intro && e.intro?.length) {
     busy = true;
     for (const f of e.intro) {
       sprite.src = src(f);
-      await wait(INTRO_MS);
+      await wait(timing.introFrame);
       if (expr !== name) return; // switched again mid-intro
     }
     busy = false;
@@ -199,15 +282,15 @@ function pickLine(moment, vars) {
 }
 
 async function say(moment, vars = {}) {
-  if (!pack) return;
+  if (!pack || !card) return;
   const line = pickLine(moment, vars);
   if (!line) return;
   stopSpeaking();
   hideMenu();
   const me = (speaking = { timer: 0 });
 
-  // cut-in: band slashes in, card pops, box opens
-  for (const b of bands) b.classList.add('on');
+  // cut-in: speakers (data-speak) come on, card pops, box opens
+  for (const el of speakers) el.classList.add('on');
   restartAnim(card, 'pop');
   text.textContent = '';
   bubble.hidden = false;
@@ -219,16 +302,14 @@ async function say(moment, vars = {}) {
     if (speaking !== me) return;
     // the untyped rest stays laid out (hidden) so centred text doesn't shift
     text.innerHTML = `<span>${esc(line.t.slice(0, i))}<span class="rest">${esc(line.t.slice(i))}</span></span>`;
-    await wait(/[.,!?]/.test(line.t[i - 1]) ? TYPE_MS * 6 : TYPE_MS);
+    await wait(/[.,!?]/.test(line.t[i - 1]) ? timing.punctuation : timing.type);
   }
   card.classList.remove('chatter');
   me.timer = setTimeout(() => {
     if (speaking !== me) return;
     speaking = null;
-    bubble.hidden = true;
-    for (const b of bands) b.classList.remove('on');
-    show(idleName(), false);
-  }, Math.max(3200, line.t.length * 55));
+    quiet();
+  }, Math.max(timing.hold, line.t.length * timing.holdPerChar));
 }
 
 function stopSpeaking() {
@@ -237,87 +318,95 @@ function stopSpeaking() {
   card.classList.remove('chatter');
 }
 
+/** Close the speech box and go back to the idle expression. */
+function quiet() {
+  bubble.hidden = true;
+  for (const el of speakers) el.classList.remove('on');
+  show(idleName(), false);
+}
+
 function restartAnim(el, cls) {
   el.classList.remove(cls);
   void el.offsetWidth;
   el.classList.add(cls);
 }
 
-// ---------- pointer: poke, drag, menu ----------
+// ---------- pointer: poke, drag, menu, badge ----------
 
-let down = null;
+function wire() {
+  let down = null;
 
-card.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0) return;
-  hideMenu();
-  down = { x: e.screenX, y: e.screenY, dragging: false };
-});
+  card.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    hideMenu();
+    down = { x: e.screenX, y: e.screenY, dragging: false };
+  });
 
-addEventListener('pointermove', (e) => {
-  if (!down || down.dragging || !(e.buttons & 1)) return;
-  if (Math.hypot(e.screenX - down.x, e.screenY - down.y) > 4) {
-    down.dragging = true;
-    host.drag();
-  }
-});
+  addEventListener('pointermove', (e) => {
+    if (!down || down.dragging || !(e.buttons & 1)) return;
+    if (Math.hypot(e.screenX - down.x, e.screenY - down.y) > 4) {
+      down.dragging = true;
+      host.drag();
+    }
+  });
 
-addEventListener('pointerup', (e) => {
-  if (down && !down.dragging && e.target.closest('#card')) {
-    restartAnim(card, 'wiggle');
-    say('poke');
-  }
-  down = null;
-});
+  addEventListener('pointerup', (e) => {
+    if (down && !down.dragging && e.target.closest('#card')) {
+      restartAnim(card, 'wiggle');
+      say('poke');
+    }
+    down = null;
+  });
 
-card.addEventListener('contextmenu', (e) => {
-  e.preventDefault();
-  stopSpeaking();
-  bubble.hidden = true;
-  for (const b of bands) b.classList.remove('on');
-  show(idleName(), false);
-  renderMenu('main');
-  menu.hidden = false;
-  restartAnim(menu, 'show');
-});
-
-bubble.addEventListener('click', () => {
-  stopSpeaking();
-  bubble.hidden = true;
-  for (const b of bands) b.classList.remove('on');
-  show(idleName(), false);
-});
-
-menu.addEventListener('click', (e) => {
-  const btn = e.target.closest('[data-act]');
-  const act = btn?.dataset.act;
-  if (!act) return;
-  if (act === 'startMenu' || act === 'back') {
-    renderMenu(act === 'back' ? 'main' : 'start');
+  card.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    stopSpeaking();
+    quiet();
+    renderMenu('main');
+    menu.hidden = false;
     restartAnim(menu, 'show');
-    return;
-  }
-  hideMenu();
-  if (act === 'locked') {
-    say('lockout', { min: Math.ceil((app?.lockoutMs ?? 0) / 60_000) });
-  } else if (act === 'start') {
-    host.act('start', { id: btn.dataset.id });
-  } else if (act === 'talk') {
-    const h = new Date().getHours();
-    say(h >= 0 && h < 5 ? 'late' : Math.random() < 0.5 ? 'poke' : 'idle');
-  } else if (act === 'flip') {
-    flipped = !flipped;
-    card.classList.toggle('flip', flipped);
-    try {
-      localStorage.setItem('togami.pet.flip', flipped ? '1' : '0');
-    } catch {}
-  } else host.act(act);
-});
+  });
 
-addEventListener('keydown', (e) => e.key === 'Escape' && hideMenu());
-addEventListener('blur', hideMenu);
+  bubble.addEventListener('click', () => {
+    stopSpeaking();
+    quiet();
+  });
+
+  menu.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-act]');
+    const act = btn?.dataset.act;
+    if (!act) return;
+    if (act === 'startMenu' || act === 'back') {
+      renderMenu(act === 'back' ? 'main' : 'start');
+      restartAnim(menu, 'show');
+      return;
+    }
+    hideMenu();
+    if (act === 'locked') {
+      say('lockout', { min: Math.ceil((app?.lockoutMs ?? 0) / 60_000) });
+    } else if (act === 'start') {
+      host.act('start', { id: btn.dataset.id });
+    } else if (act === 'talk') {
+      const h = new Date().getHours();
+      say(h >= 0 && h < 5 ? 'late' : Math.random() < 0.5 ? 'poke' : 'idle');
+    } else if (act === 'flip') {
+      flipped = !flipped;
+      card.classList.toggle('flip', flipped);
+      try {
+        localStorage.setItem('togami.pet.flip', flipped ? '1' : '0');
+      } catch {}
+    } else host.act(act);
+  });
+
+  addEventListener('keydown', (e) => e.key === 'Escape' && hideMenu());
+  addEventListener('blur', hideMenu);
+
+  // click the badge to pause or restart the timer (blocking stays on)
+  badge.addEventListener('click', () => host.act('hold'));
+}
 
 function hideMenu() {
-  menu.hidden = true;
+  if (menu) menu.hidden = true;
 }
 
 /** The right-click menu: "main", or "start" (pick a session type). */
@@ -340,18 +429,16 @@ function renderMenu(view) {
 
 // ---------- timer badge (while a session runs) ----------
 
-const badge = $('#badge');
-// click the badge to pause or restart the timer (blocking stays on)
-badge.addEventListener('click', () => host.act('hold'));
-
 function renderBadge() {
+  if (!badge) return;
   const s = app?.session;
   badge.hidden = !s || !pack;
   if (!s) return;
   const sec = Math.round(s.remaining / 1000);
   const time = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
   const label = s.pause === 'paused' ? 'Paused' : s.held ? 'Timer paused' : s.kind === 'focus' ? 'Focus' : s.kind === 'long' ? 'Long break' : 'Break';
-  badge.className = 'badge ' + (s.pause === 'paused' || s.held ? 'paused' : s.kind === 'focus' ? 'focus' : 'brk');
+  badge.classList.remove('focus', 'brk', 'paused');
+  badge.classList.add(s.pause === 'paused' || s.held ? 'paused' : s.kind === 'focus' ? 'focus' : 'brk');
   badge.innerHTML = `<small>${label}</small><b>${time}</b>`;
 }
 
@@ -372,12 +459,14 @@ function sendHit() {
   host.hit(rects);
 }
 
-/** The speaker's name as P5 draws it: black, with one letter (two from 8
- *  letters, three from 16) inverted, white on a black block. */
+/** The speaker's name, with some letters wrapped in <b> as the pack's
+ *  nameHighlight asks: { minLength: letters }, e.g. { "1": 1, "8": 2 } gives
+ *  one letter, or two from 8 characters. Which letters is random. */
 function nameHtml(name) {
   const chars = [...name];
   const slots = chars.map((c, i) => i).filter((i) => chars[i].trim());
-  const count = chars.length >= 16 ? 3 : chars.length >= 8 ? 2 : 1;
+  let count = 0;
+  for (const [min, n] of Object.entries(pack.nameHighlight || {})) if (chars.length >= Number(min)) count = Math.max(count, Number(n) || 0);
   const inv = new Set();
   while (inv.size < Math.min(count, slots.length)) inv.add(slots[Math.floor(Math.random() * slots.length)]);
   return chars.map((c, i) => (inv.has(i) ? `<b>${esc(c)}</b>` : esc(c))).join('');

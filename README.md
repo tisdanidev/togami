@@ -26,28 +26,20 @@ A focus timer and distraction blocker for students. Pick a session type, say wha
 - **Runs in the background.** Closing the window hides Togami to the tray: the timer, blocking, jingles and the pet keep going. Click the tray icon to bring it back; quit from the tray menu (it asks first during a session, since that counts as quitting). Opening Togami again brings back the running copy.
 - **Automatic updates.** Installed copies check GitHub releases on launch and every few hours. A new version is required: once no session or lockout is running, a full-window screen blocks Togami until it's installed (*Install and restart*).
 - **Voices.** Neutral, or *Heir*: cold and superior.
-- **Desktop pet.** Import a pet pack and a character sits in the corner of your desktop in a Persona-style cut-in card. It reacts to focus starts, breaks, blocked sites, pauses, quits, lockouts, pardons and updates with its own lines, blinks, and nags you now and then when no session runs. Drag it anywhere, click it, or right-click for *Start focus* (pick a session type), *Open Togami*, *Talk*, *Turn around* and *Hide*. While a session runs, a timer badge sits on its card. Clicks pass through everything except the pet. Settings → Desktop pet.
+- **Desktop pet.** Import a pet pack and a character sits in the corner of your desktop in the style the pack brings (the template is a Persona 5 cut-in card). It reacts to focus starts, breaks, blocked sites, pauses, quits, lockouts, pardons and updates with its own lines, blinks, and nags you now and then when no session runs. Drag it anywhere, click it, or right-click for *Start focus* (pick a session type), *Open Togami*, *Talk*, *Turn around* and *Hide*. While a session runs, a timer badge sits on its card. Clicks pass through everything except the pet. Settings → Desktop pet.
 
 ### Pet packs
 
-Togami ships without characters. A pack is a zip with `pet.json` and its frames (WebP or PNG):
+Togami ships without characters, and without a pet look of its own: a pack brings the character, its lines and its whole style. A pack is a zip of one folder holding:
 
-```json
-{
-  "name": "Morgana",
-  "idle": "happy",
-  "expressions": {
-    "happy": { "intro": ["happy-in0.webp"], "open": "happy-open.webp", "closed": "happy-closed.webp" }
-  },
-  "lines": {
-    "workStart": [{ "e": "happy", "t": "{min} minutes. Let's go!" }]
-  }
-}
-```
+- `pet.json`: name, window size, timing, expressions (frames) and lines for each moment.
+- `style.css`: everything the card, speech box, menu and timer badge look like, including animations.
+- `layout.html`: the markup of those parts (`#card`, `#sprite`, `#bubble`, `#text`, and optionally `#name`, `#menu`, `#badge`). Scripts and event handlers are stripped.
+- Frames (WebP or PNG) and fonts (WOFF2, WOFF, TTF or OTF).
 
-- `intro` frames play when the pet switches to an expression, `open` is the resting frame and `closed` (optional) is used for blinking.
-- Moments: `hello`, `workStart`, `breakStart`, `breakEnd`, `sessionEnd`, `blockWarn`, `block`, `pauseRequested`, `paused`, `resumed`, `quit`, `lockout`, `lockoutEnded`, `pardon`, `update`, `idle`, `late`, `poke`. Lines can use `{intention}`, `{min}`, `{target}` and `{version}`. A line is only used when every placeholder has a value. Moments without lines fall back to plain built-in ones.
-- In the browser build, unzip a pack into `packs/current/` (gitignored) and run `npm run dev`.
+[`blank_pet/`](blank_pet/) is a working template, with the Persona 5 dialogue style and placeholder frames, and [`blank_pet/README.md`](blank_pet/README.md) documents the format: every field, moment and placeholder, and the classes Togami toggles for `style.css` to animate.
+
+- In the browser build, copy a pack folder to `packs/current/` (gitignored) and run `npm run dev`.
 - Don't commit packs made from game art.
 
 ## Run it

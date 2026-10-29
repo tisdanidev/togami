@@ -521,7 +521,7 @@ function viewSettings(t) {
       ${petName ? `<div class="toggle-row">
         <div class="lbl"><b>Show ${esc(petName)}</b><span>Sits on your desktop and reacts to your sessions. Drag to move, right-click for options.</span></div>
         <label class="switch"><input type="checkbox" id="setPet" ${state.settings.pet ? 'checked' : ''} aria-label="Show the desktop pet" /><i></i></label>
-      </div>` : `<p class="muted small" style="margin-top:0">${pet.canImport ? 'Import a pet pack (a .zip with pet.json and its frames) to get a character on your desktop that reacts to your sessions.' : 'Browser build: put an unzipped pet pack in the packs/current folder and reload.'}</p>`}
+      </div>` : `<p class="muted small" style="margin-top:0">${pet.canImport ? 'Import a pet pack (a .zip with pet.json, its style and its frames) to get a character on your desktop that reacts to your sessions.' : 'Browser build: put an unzipped pet pack in the packs/current folder and reload.'}</p>`}
       ${pet.canImport ? `<div class="pet-row">
         <button class="btn" type="button" data-act="petImport">${petName ? 'Replace pet pack' : 'Import pet pack'}</button>
         ${petName ? '<button class="btn quiet" type="button" data-act="petRemove">Remove pet</button>' : ''}

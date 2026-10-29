@@ -1,7 +1,8 @@
 // The desktop pet: a small always-on-top window (pet.html) that sits on the
 // desktop and reacts to the session. Characters come from a pet pack, a zip
-// with pet.json and its frames, imported by the user into the app data folder
-// (packs are never bundled with Togami). The window is transparent and lets
+// with pet.json, style.css, layout.html and its frames and fonts, imported by
+// the user into the app data folder (packs are never bundled with Togami, and
+// Togami has no pet look of its own: see blank_pet/README.md). The window is transparent and lets
 // clicks through everywhere except the rectangles pet.html reports (the pet,
 // its speech box and its menu): a thread checks the cursor against them.
 
@@ -11,9 +12,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::ipc::{InvokeBody, Request};
-use tauri::{AppHandle, Manager, PhysicalPosition, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, LogicalSize, Manager, PhysicalPosition, State, WebviewUrl, WebviewWindowBuilder};
 
 const LABEL: &str = "pet";
+/// Window size when pet.json doesn't give one, in CSS pixels.
 const WIDTH: f64 = 560.0;
 const HEIGHT: f64 = 340.0;
 const MAX_PACK_BYTES: u64 = 64 * 1024 * 1024;
@@ -32,18 +34,34 @@ fn read_manifest(dir: &Path) -> Result<Value, String> {
     if !manifest["expressions"].is_object() {
         return Err("pet.json has no expressions.".into());
     }
+    for file in ["style.css", "layout.html"] {
+        if !dir.join(file).is_file() {
+            return Err(format!("The pack has no {file}. Pet packs bring their own look now: copy it from blank_pet."));
+        }
+    }
     Ok(manifest)
 }
 
-fn image_type(name: &str) -> Option<&'static str> {
-    let lower = name.to_ascii_lowercase();
-    if lower.ends_with(".webp") {
-        Some("image/webp")
-    } else if lower.ends_with(".png") {
-        Some("image/png")
-    } else {
-        None
-    }
+/// The pet window's size from pet.json's "window", in CSS pixels.
+fn window_size(manifest: &Value) -> (f64, f64) {
+    let get = |k: &str, default: f64| manifest["window"][k].as_f64().unwrap_or(default).clamp(120.0, 1600.0);
+    (get("width", WIDTH), get("height", HEIGHT))
+}
+
+/// Media type of a file a pack may contain (anything else is skipped).
+fn file_type(name: &str) -> Option<&'static str> {
+    let ext = name.rsplit_once('.')?.1.to_ascii_lowercase();
+    Some(match ext.as_str() {
+        "webp" => "image/webp",
+        "png" => "image/png",
+        "woff2" => "font/woff2",
+        "woff" => "font/woff",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        "css" => "text/css",
+        "html" => "text/html",
+        _ => return None,
+    })
 }
 
 /// The installed pack's name, if there is one.
@@ -53,21 +71,27 @@ pub fn pet_has_pack(app: AppHandle) -> Option<String> {
     Some(manifest["name"].as_str().unwrap_or("Pet").to_string())
 }
 
-/// The installed pack for pet.html: { manifest, files: { name: data URL } }.
+/// The installed pack for pet.html: { manifest, files: { name: data URL },
+/// texts: { name: text } } (style.css and layout.html come as text).
 #[tauri::command]
 pub fn pet_pack(app: AppHandle) -> Result<Value, String> {
     use base64::Engine;
     let dir = pack_dir(&app)?;
     let manifest = read_manifest(&dir)?;
     let mut files = serde_json::Map::new();
+    let mut texts = serde_json::Map::new();
     for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        let Some(mime) = image_type(&name) else { continue };
+        let Some(mime) = file_type(&name) else { continue };
         let bytes = std::fs::read(entry.path()).map_err(|e| e.to_string())?;
-        let data = base64::engine::general_purpose::STANDARD.encode(bytes);
-        files.insert(name, Value::String(format!("data:{mime};base64,{data}")));
+        if mime.starts_with("text/") {
+            texts.insert(name, Value::String(String::from_utf8_lossy(&bytes).into_owned()));
+        } else {
+            let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+            files.insert(name, Value::String(format!("data:{mime};base64,{data}")));
+        }
     }
-    Ok(json!({ "manifest": manifest, "files": files }))
+    Ok(json!({ "manifest": manifest, "files": files, "texts": texts }))
 }
 
 /// Installs a pet pack from the zip's bytes (sent raw from the file picker).
@@ -103,7 +127,7 @@ pub async fn pet_import(app: AppHandle, request: Request<'_>) -> Result<String, 
             continue;
         }
         let Some(name) = p.file_name().map(|n| n.to_string_lossy().to_string()) else { continue };
-        if name != "pet.json" && image_type(&name).is_none() {
+        if name != "pet.json" && file_type(&name).is_none() {
             continue;
         }
         total += f.size();
@@ -115,8 +139,8 @@ pub async fn pet_import(app: AppHandle, request: Request<'_>) -> Result<String, 
         f.read_to_end(&mut buf).map_err(|e| e.to_string())?;
         std::fs::write(incoming.join(&name), buf).map_err(|e| e.to_string())?;
     }
-    let name = match read_manifest(&incoming) {
-        Ok(m) => m["name"].as_str().unwrap_or("Pet").to_string(),
+    let manifest = match read_manifest(&incoming) {
+        Ok(m) => m,
         Err(e) => {
             let _ = std::fs::remove_dir_all(&incoming);
             return Err(e);
@@ -125,9 +149,11 @@ pub async fn pet_import(app: AppHandle, request: Request<'_>) -> Result<String, 
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::rename(&incoming, &dir).map_err(|e| e.to_string())?;
     if let Some(w) = app.get_webview_window(LABEL) {
+        let (width, height) = window_size(&manifest);
+        let _ = w.set_size(LogicalSize::new(width, height));
         let _ = w.eval("location.reload()");
     }
-    Ok(name)
+    Ok(manifest["name"].as_str().unwrap_or("Pet").to_string())
 }
 
 #[tauri::command]
@@ -146,14 +172,14 @@ pub fn pet_remove(app: AppHandle) -> Result<(), String> {
 /// physical position, or bottom right of the primary screen.
 #[tauri::command]
 pub async fn pet_show(app: AppHandle, pos: Option<(i32, i32)>) -> Result<(), String> {
-    read_manifest(&pack_dir(&app)?)?;
+    let (width, height) = window_size(&read_manifest(&pack_dir(&app)?)?);
     if let Some(w) = app.get_webview_window(LABEL) {
         return w.show().map_err(|e| e.to_string());
     }
     let w = WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::App("pet.html".into()))
         .title("Togami pet")
         .additional_browser_args(crate::tray::BROWSER_ARGS)
-        .inner_size(WIDTH, HEIGHT)
+        .inner_size(width, height)
         .resizable(false)
         .decorations(false)
         .transparent(true)
@@ -180,8 +206,8 @@ pub async fn pet_show(app: AppHandle, pos: Option<(i32, i32)>) -> Result<(), Str
             let a = m.work_area();
             let s = m.scale_factor();
             (
-                a.position.x + a.size.width as i32 - (WIDTH * s) as i32,
-                a.position.y + a.size.height as i32 - (HEIGHT * s) as i32,
+                a.position.x + a.size.width as i32 - (width * s) as i32,
+                a.position.y + a.size.height as i32 - (height * s) as i32,
             )
         }),
     };
