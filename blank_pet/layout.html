@@ -1,0 +1,30 @@
+<!-- The pet's parts. Togami needs the ids #card, #sprite, #bubble and #text;
+     #name, #menu and #badge are optional (Togami adds an empty #menu and
+     #badge if they're missing). Anything with data-speak gets the class "on"
+     while the pet speaks. Order matters only for stacking: later is on top.
+     No scripts or event handlers: they are stripped on load. -->
+<div class="band" data-speak></div>
+<div class="band b2" data-speak></div>
+<div class="bubble" id="bubble">
+  <!-- traced from the P5 dialogue box (950 x 284) -->
+  <svg viewBox="0 0 950 284" preserveAspectRatio="none" aria-hidden="true">
+    <!-- outlines are filled layers offset by a different amount at each
+         corner, so the black and white lines swell and thin like P5's -->
+    <polygon points="127,125 836,60 888,302 167,244 139,255 95,219 72,224 51,204 -6,165 72,142" fill="#0b0b0b" />
+    <polygon points="128,127 831,66 870,286 167,239 140,251 97,211 73,220 55,196 -1,166 73,147" fill="#fbfbf6" />
+    <polygon points="128,128 828,70 860,276 166,236 140,250 98,206 74,218 58,192 2,166 74,150" fill="#262626" />
+    <polygon points="56,105 442,-4 502,60 134,134 77,134 107,113" fill="#0b0b0b" />
+    <polygon points="68,104 440,4 478,52 134,130 96,128 112,112" fill="#fbfbf6" />
+    <polygon points="868,105 969,186 733,253" fill="#0b0b0b" />
+    <polygon points="870,110 946,180 742,246" fill="#fbfbf6" />
+  </svg>
+  <div class="name" id="name"></div>
+  <p id="text"></p>
+</div>
+<div class="card" id="card">
+  <div class="edge"></div>
+  <div class="rim"></div>
+  <div class="fill"><img class="sprite" id="sprite" alt="" /></div>
+</div>
+<div class="badge" id="badge" title="Click to pause or restart the timer"></div>
+<div class="menu" id="menu"></div>

@@ -5,168 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Togami pet</title>
 <style>
-  /* The desktop pet, styled after Persona 5's dialogue: the character sits in
-     a slanted red card on the left; when it speaks, a striped band slashes in
-     behind it and the P5 dialogue box opens to its right: a dark wedge with a
-     lightning-bolt point aimed at the speaker, a white name strip rising at
-     -14.65 degrees in the original (about -21 here, since the box is drawn
-     taller; the speaker's name in black with one or more letters
-     inverted) and a white triangle on the far end. White text inside.
-     Persona 5 Royal sets dialogue in Optima Nova Black (the original release
-     used KoreanKRSM). Neither can ship with Togami, so the real font is used
-     when it's installed and Proza Libre ExtraBold, the closest open font, otherwise.
-     The window is transparent and lets clicks through everywhere but the
-     card, box and menu. */
-  @font-face {
-    font-family: 'P5 Text';
-    font-weight: 800;
-    font-display: block;
-    src: local('Optima Nova LT Black'), local('OptimaNovaLT-Black'), local('Optima nova LT Black'),
-      url(fonts/ProzaLibre-normal-800-latin.woff2) format('woff2');
-  }
-  :root {
-    --red: #e3141b;
-    --red-deep: #9e0a10;
-    --ink: #0b0b0b;
-    --box: #262626;
-    --paper: #fbfbf6;
-    --p5: 'P5 Text', 'Optima Nova LT', Optima, Candara, sans-serif;
-  }
+  /* The desktop pet window. It has no look of its own: the installed pet pack
+     brings its layout (layout.html) and styles (style.css), and js/pet.js
+     puts them in #stage. The window is transparent and lets clicks through
+     everywhere but the pack's #card, #bubble, #menu and #badge. */
   html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; -webkit-user-select: none; }
-  body { font-family: var(--p5); font-weight: 800; }
   #stage { position: absolute; inset: 0; }
   [hidden] { display: none !important; }
-
-  /* ---- the card ---- */
-  .card {
-    position: absolute; left: 12px; bottom: 14px; width: 226px; height: 164px;
-    transform: rotate(-3deg); transform-origin: 30% 80%; cursor: grab;
-    filter: drop-shadow(4px 5px 0 rgba(0, 0, 0, .35));
-  }
-  .card:active { cursor: grabbing; }
-  .card > div { position: absolute; }
-  .card .edge { inset: 0; background: var(--ink); clip-path: polygon(9% 0, 100% 4%, 93% 100%, 0 95%); }
-  /* rim and fill are inset by a different amount at each corner (thick-thin outline) */
-  .card .rim { inset: 0; background: var(--paper); clip-path: polygon(9.8% 1.3%, 97% 7.5%, 89.5% 93.9%, 1.5% 93.2%); }
-  .card .fill {
-    inset: 0; overflow: hidden; clip-path: polygon(11% 3.2%, 94.6% 9.7%, 87.6% 90.3%, 3.5% 90.7%);
-    background:
-      radial-gradient(circle, rgba(0, 0, 0, .22) 1.3px, transparent 1.8px) 0 0 / 7px 7px,
-      linear-gradient(160deg, var(--red) 0 55%, var(--red-deep) 100%);
-  }
-  .sprite {
-    position: absolute; left: 1.8%; bottom: 2.4%; width: 96.5%; height: auto; pointer-events: none;
-    transform-origin: 50% 100%; animation: breathe 3.8s ease-in-out infinite;
-  }
-  .flip .sprite { scale: -1 1; }
-  @keyframes breathe { 50% { transform: translateY(-2px) scaleY(1.012); } }
-  .chatter .sprite { animation: chatter .26s ease-in-out infinite alternate; }
-  @keyframes chatter { from { transform: translateY(0) rotate(0); } to { transform: translateY(-4px) rotate(1.2deg); } }
-
-  .card.pop { animation: pop .42s cubic-bezier(.2, 1.6, .4, 1); }
-  @keyframes pop {
-    0% { transform: rotate(-3deg) translateX(-46px) scale(.86); }
-    60% { transform: rotate(-1deg) translateX(6px) scale(1.04); }
-    100% { transform: rotate(-3deg); }
-  }
-  .card.wiggle { animation: wiggle .35s ease-in-out; }
-  @keyframes wiggle { 25% { transform: rotate(-7deg); } 75% { transform: rotate(1deg); } }
-
-  /* ---- the slash band behind the card ---- */
-  .band {
-    position: absolute; left: -30px; bottom: 50px; width: 640px; height: 64px; pointer-events: none;
-    transform: rotate(-11deg) scaleX(0); transform-origin: 0 50%; opacity: 0;
-    background:
-      repeating-linear-gradient(75deg, transparent 0 34px, rgba(0, 0, 0, .9) 34px 46px),
-      linear-gradient(var(--red), var(--red));
-    clip-path: polygon(0 0, 100% 30%, 96% 78%, 0 100%);
-    transition: transform .28s cubic-bezier(.2, .9, .3, 1), opacity .18s;
-  }
-  .band.on { transform: rotate(-11deg) scaleX(1); opacity: 1; }
-  .band.b2 {
-    bottom: 24px; height: 26px; width: 600px; transition-delay: .05s;
-    background: var(--ink); clip-path: polygon(0 0, 100% 40%, 98% 70%, 0 100%);
-  }
-
-  /* ---- P5 dialogue box ---- */
-  .bubble { position: absolute; left: 196px; bottom: 104px; width: 356px; height: 164px; transform-origin: 0 80%; }
-  .bubble.show { animation: bubble .3s cubic-bezier(.2, 1.4, .4, 1); }
-  @keyframes bubble { from { transform: translateX(-30px) rotate(6deg) scale(.5); opacity: 0; } }
-  .bubble svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
-  .bubble .name {
-    /* centred on the middle of the name strip (viewBox 280,72) */
-    position: absolute; left: 29.5%; top: 25.4%; transform: translate(-50%, -50%) rotate(-21deg);
-    color: var(--ink); font-size: 18px; line-height: 1; white-space: pre; letter-spacing: .3px;
-  }
-  .bubble p .rest { visibility: hidden; }
-  .bubble .name b { display: inline-block; font-weight: inherit; background: var(--ink); color: #fff; padding: 2px 3px 3px; margin: -2px 1px 0; }
-  .bubble p {
-    /* centred in the dark part of the box, clear of the point and the triangle */
-    position: absolute; left: 16%; right: 22%; top: 37%; bottom: 13%; margin: 0;
-    display: flex; align-items: center; justify-content: center; text-align: center;
-    color: #fff; font-size: 15px; line-height: 1.3; letter-spacing: .2px;
-  }
-
-  /* ---- right-click menu ---- */
-  .menu { position: absolute; left: 226px; bottom: 26px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
-  .menu.show { animation: bubble .22s cubic-bezier(.2, 1.4, .4, 1); }
-  .menu button {
-    all: unset; cursor: pointer; padding: 6px 18px 7px 14px; transform: skewX(-12deg);
-    background: var(--ink); color: #fff; font: 800 15px/1 var(--p5); letter-spacing: .4px;
-    box-shadow: 4px 4px 0 var(--red); border: 2px solid var(--paper); transition: transform .1s, background .1s;
-  }
-  .menu button:nth-child(2) { margin-left: 12px; }
-  .menu button:nth-child(3) { margin-left: 24px; }
-  .menu button:nth-child(4) { margin-left: 36px; }
-  .menu button:nth-child(5) { margin-left: 48px; }
-  .menu button:nth-child(6) { margin-left: 60px; }
-  .menu button small { font-size: 11px; opacity: .7; margin-left: 6px; letter-spacing: 0; }
-  .menu button.off { background: #3a3a3a; color: #bbb; box-shadow: 4px 4px 0 #555; }
-
-  /* ---- timer badge on the card while a session runs ---- */
-  .badge {
-    position: absolute; left: 26px; bottom: 166px; z-index: 3; cursor: pointer;
-    display: flex; align-items: baseline; gap: 8px; padding: 5px 14px 6px 12px;
-    transform: rotate(-6deg) skewX(-10deg); background: var(--ink); color: #fff;
-    border: 2px solid var(--paper); box-shadow: 5px 4px 0 var(--red);
-  }
-  .badge > * { transform: skewX(10deg); }
-  .badge small { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; opacity: .85; }
-  .badge b { font-size: 24px; line-height: 1; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: .5px; }
-  .badge.brk { background: var(--paper); color: var(--ink); border-color: var(--ink); box-shadow: 5px 4px 0 #1f9d55; }
-  .badge.paused { background: #3a3a3a; box-shadow: 5px 4px 0 #777; }
-  .menu button:hover, .menu button:focus-visible { background: var(--red); transform: skewX(-12deg) translateX(6px); box-shadow: 4px 4px 0 var(--ink); }
-  .menu button span { display: inline-block; transform: skewX(12deg); }
+  img { -webkit-user-drag: none; }
 </style>
 </head>
 <body>
-  <div id="stage">
-    <div class="band" id="band"></div>
-    <div class="band b2" id="band2"></div>
-    <div class="bubble" id="bubble" hidden>
-      <!-- traced from the P5 dialogue box (950 x 284) -->
-      <svg viewBox="0 0 950 284" preserveAspectRatio="none" aria-hidden="true">
-        <!-- outlines are filled layers offset by a different amount at each
-             corner, so the black and white lines swell and thin like P5's -->
-        <polygon points="127,125 836,60 888,302 167,244 139,255 95,219 72,224 51,204 -6,165 72,142" fill="#0b0b0b" />
-        <polygon points="128,127 831,66 870,286 167,239 140,251 97,211 73,220 55,196 -1,166 73,147" fill="#fbfbf6" />
-        <polygon points="128,128 828,70 860,276 166,236 140,250 98,206 74,218 58,192 2,166 74,150" fill="#262626" />
-        <polygon points="56,105 442,-4 502,60 134,134 77,134 107,113" fill="#0b0b0b" />
-        <polygon points="68,104 440,4 478,52 134,130 96,128 112,112" fill="#fbfbf6" />
-        <polygon points="868,105 969,186 733,253" fill="#0b0b0b" />
-        <polygon points="870,110 946,180 742,246" fill="#fbfbf6" />
-      </svg>
-      <div class="name" id="name"></div>
-      <p id="text" aria-live="polite"></p>
-    </div>
-    <div class="card" id="card" hidden>
-      <div class="edge"></div>
-      <div class="rim"></div>
-      <div class="fill"><img class="sprite" id="sprite" alt="" draggable="false" /></div>
-    </div>
-    <div class="badge" id="badge" hidden title="Click to pause or restart the timer"></div>
-    <div class="menu" id="menu" hidden></div>
-  </div>
+  <div id="stage" hidden></div>
   <script type="module" src="js/pet.js"></script>
 </body>
 </html>

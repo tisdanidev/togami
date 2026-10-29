@@ -1,0 +1,36 @@
+{
+  "format": 1,
+  "name": "Blank",
+  "window": { "width": 560, "height": 340 },
+  "timing": { "introFrame": 70, "type": 24, "punctuation": 144, "hold": 3200, "holdPerChar": 55 },
+  "nameHighlight": { "1": 1, "8": 2, "16": 3 },
+  "idle": "neutral",
+  "expressions": {
+    "neutral": { "open": "neutral-open.png", "closed": "neutral-closed.png" },
+    "happy": { "intro": ["happy-in0.png"], "open": "happy-open.png", "closed": "happy-closed.png" },
+    "annoyed": { "intro": ["annoyed-in0.png"], "open": "annoyed-open.png", "closed": "annoyed-closed.png" }
+  },
+  "lines": {
+    "hello": [{ "e": "happy", "t": "Hi! I'll keep you company while you work." }],
+    "workStart": [
+      { "e": "happy", "t": "{min} minutes on {intention}. Let's go!" },
+      { "e": "neutral", "t": "{min} minutes. You can do this." }
+    ],
+    "breakStart": [{ "e": "happy", "t": "Break time. Stretch a little." }],
+    "breakEnd": [{ "e": "neutral", "t": "Break is over. Back to it." }],
+    "sessionEnd": [{ "e": "happy", "t": "Session complete. Well done!" }],
+    "blockWarn": [{ "e": "annoyed", "t": "Close {target}, quick!" }],
+    "block": [{ "e": "annoyed", "t": "{target} is blocked right now." }],
+    "pauseRequested": [{ "e": "neutral", "t": "Pausing in two minutes." }],
+    "paused": [{ "e": "neutral", "t": "Paused." }],
+    "resumed": [{ "e": "happy", "t": "Back to work." }],
+    "quit": [{ "e": "annoyed", "t": "Session ended." }],
+    "lockout": [{ "e": "annoyed", "t": "Locked for {min} minutes." }],
+    "lockoutEnded": [{ "e": "neutral", "t": "Lockout over." }],
+    "pardon": [{ "e": "happy", "t": "You earned a pardon." }],
+    "update": [{ "e": "neutral", "t": "Togami {version} is ready to install." }],
+    "idle": [{ "e": "neutral", "t": "Ready when you are." }],
+    "late": [{ "e": "annoyed", "t": "It's late. Get some sleep." }],
+    "poke": [{ "e": "happy", "t": "Hey there!" }]
+  }
+}
