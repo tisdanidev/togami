@@ -1,9 +1,9 @@
-// Togami UI. Renders views from state, runs the clock, wires the Windows layer.
+// Togami UI. Renders views from state, runs the clock, wires the Windows and macOS layer.
 
 import * as E from './engine.js';
 import * as store from './store.js';
 import * as clock from './clock.js';
-import { blocker, media, appWindow, notify, updater, pet, background, isNative, isDev } from './platform.js';
+import { blocker, media, appWindow, notify, updater, pet, background, access, isNative, isDev, OS } from './platform.js';
 import * as sounds from './sounds.js';
 import { voice, QUIT_PHRASE } from './voice.js';
 import { clock as fmtClock, fmtMin, fmtHours, fmtDate, fmtTime, esc } from './format.js';
@@ -48,6 +48,7 @@ let updateState = 'idle'; // idle | checking | none | installing | error
 let updateError = '';
 let updatePreview = false; // test bench: show the update screen without a real update
 let petName = null; // name of the installed pet pack
+let accessOk = null; // macOS: may the blocker use Accessibility (null: not known yet, or not macOS)
 let petBusy = ''; // pet pack import or removal message
 let lastNudge = Date.now(); // when the pet last spoke up on its own
 let lastLate = 0;
@@ -315,7 +316,7 @@ function renderZen(t) {
       ${heldLine}
       <div class="z-np" data-np="full"></div>
       <div class="z-bottom"><button class="z-btn" type="button" data-act="quit">Quit session</button></div>
-      <div class="z-hint">F11 full screen</div>`;
+      <div class="z-hint">${OS.fullscreen} full screen</div>`;
     return;
   }
   let pause = '';
@@ -335,7 +336,7 @@ function renderZen(t) {
       ${sv.pause === 'none' && !sv.held ? `<button class="z-btn" type="button" data-act="pause" ${sv.remaining > E.RULES.pauseWaitMs ? '' : 'disabled'}>Pause</button>` : ''}
       <button class="z-btn" type="button" data-act="quit">Quit</button>
     </div>
-    <div class="z-hint">F11 full screen</div>`;
+    <div class="z-hint">${OS.fullscreen} full screen</div>`;
 }
 
 // ----- blocklist -----
@@ -364,7 +365,7 @@ function viewBlocklist(t) {
     <div class="section">
       <div class="col-head"><h2>Always allowed</h2><span class="small muted">Never blocked, in any session</span></div>
       <div class="list">
-        ${E.ALWAYS_ALLOWED.map((x) => `<div class="list-row"><span class="name">${esc(x)}</span><span class="lock">Built in</span></div>`).join('')}
+        ${OS.builtIn.map((x) => `<div class="list-row"><span class="name">${esc(x)}</span><span class="lock">Built in</span></div>`).join('')}
         ${state.allowlist.map((x, i) => `<div class="list-row"><span class="name">${esc(x)}</span><button class="x" type="button" data-act="rm" data-kind="allow" data-i="${i}" aria-label="Remove ${esc(x)}" ${dis}>×</button></div>`).join('')}
         <form class="list-add" data-form="allow">
           <input class="input sm" id="add-allow" placeholder="App or site you need for school" autocomplete="off" ${dis} />
@@ -502,6 +503,13 @@ function viewSettings(t) {
       </div>
       <p class="muted small" style="margin-top:10px">Block screen preview: <i style="font-family:var(--serif);font-size:15px;color:var(--fg)">${esc(sampleVoice.blockTitle('Discord'))}</i></p>
     </div>
+    ${access.needed ? `<div class="section">
+      <h2>Permissions</h2>
+      <div class="toggle-row">
+        <div class="lbl"><b>Accessibility</b><span>${accessOk ? 'Allowed: Togami can read tab titles and close tabs on blocked sites.' : 'Lets Togami read tab titles and close tabs on blocked sites. Blocking apps works without it.'} macOS also asks once per browser, and for Spotify and Music, whether Togami may read them.</span></div>
+        ${accessOk ? '<span class="muted small">Allowed</span>' : '<button class="btn" type="button" data-act="accessAsk">Allow</button>'}
+      </div>
+    </div>` : ''}
     <div class="section">
       <h2>Sounds and notifications</h2>
       <div class="toggle-row">
@@ -512,8 +520,8 @@ function viewSettings(t) {
         ${[['workStart', 'Focus starts'], ['breakStart', 'Break starts'], ['breakEnd', 'Break ends'], ['sessionEnd', 'Session done']].map(([k, l]) => `<button class="btn quiet" type="button" data-act="preview" data-v="${k}">▶ ${l}</button>`).join('')}
       </div>
       <div class="toggle-row">
-        <div class="lbl"><b>Windows notifications</b><span>The same moments, shown as a notification while Togami isn't in front.</span></div>
-        <label class="switch"><input type="checkbox" id="setNotify" ${state.settings.notify ? 'checked' : ''} aria-label="Windows notifications" /><i></i></label>
+        <div class="lbl"><b>${OS.notifications}</b><span>The same moments, shown as a notification while Togami isn't in front.</span></div>
+        <label class="switch"><input type="checkbox" id="setNotify" ${state.settings.notify ? 'checked' : ''} aria-label="${OS.notifications}" /><i></i></label>
       </div>
     </div>
     <div class="section">
@@ -550,7 +558,7 @@ function viewSettings(t) {
         <div class="row"><span class="k">Lockout</span><span>Blocks stay on after a quit: 10 min for the first quit in a week, 25 for the second, 45 after that.</span></div>
         <div class="row"><span class="k">Debt</span><span>Focus time you skip is added to your next session, up to 60 min.</span></div>
         <div class="row"><span class="k">Pardons</span><span>One for every 5 finished sessions, up to 3. A pardon cancels a quit's lockout and debt. The quit stays in the ledger.</span></div>
-        <div class="row"><span class="k">Closing</span><span>Closing the window keeps Togami running in the tray. Quitting it from the tray during a session counts as quitting.</span></div>
+        <div class="row"><span class="k">Closing</span><span>Closing the window keeps Togami running in the ${OS.tray}. Quitting it from the ${OS.tray} during a session counts as quitting.</span></div>
         <div class="row"><span class="k">Emergency</span><span>Once a week, end everything now with no penalty. ${em ? '<b>Available.</b>' : '<b>Used this week</b>, back on Monday.'}</span></div>
       </div>
     </div>
@@ -814,7 +822,7 @@ function startSession(intention, profileId) {
 // ---------- blocking ----------
 
 // stage "warn": the user landed on a blocked site and has 5 seconds to close the
-// tab (the native side shows a Windows notification); count it, show nothing.
+// tab (the native side shows a notification); count it, show nothing.
 // stage "block": the window was pushed away; show the block screen.
 blocker.onAttempt(({ target, stage = 'block', warned = false }) => {
   const t = now();
@@ -847,6 +855,9 @@ document.addEventListener('click', (ev) => {
       break;
     case 'updCheck':
       checkForUpdate(true);
+      break;
+    case 'accessAsk':
+      access.request();
       break;
     case 'updInstall':
       if (updatePreview) {
@@ -1291,6 +1302,20 @@ if (updater.available) {
   setInterval(checkForUpdate, 6 * 60 * 60 * 1000);
 }
 
+// ---------- Accessibility (macOS app) ----------
+
+// checked on start and whenever Togami comes back to the front (e.g. from System Settings)
+function refreshAccess() {
+  if (!access.needed) return;
+  access.granted().then((ok) => {
+    if (ok === accessOk) return;
+    accessOk = ok;
+    if (route === 'settings') render();
+  });
+}
+refreshAccess();
+window.addEventListener('focus', refreshAccess);
+
 // ---------- background (desktop app) ----------
 
 // the window may be hidden in the tray: the native heartbeat keeps the clock going
@@ -1490,7 +1515,7 @@ function renderBench() {
   const sp = clock.getSpeed();
   bench.innerHTML = `
     <h3>Test bench</h3>
-    <p>${isDev ? 'Togami Dev. Blocking is real; these buttons only simulate.' : 'This build simulates Windows. The real app watches open windows and browser tabs.'}</p>
+    <p>${isDev ? 'Togami Dev. Blocking is real; these buttons only simulate.' : `This build simulates ${OS.name}. The real app watches open windows and browser tabs.`}</p>
     <div><h3 style="margin-bottom:6px">Clock speed</h3><div class="row">
       ${[1, 10, 60].map((x) => `<button class="btn" type="button" data-act="speed" data-v="${x}" aria-pressed="${sp === x}">${x}×</button>`).join('')}
       <button class="btn" type="button" data-act="skip" data-v="1">+1 min</button>

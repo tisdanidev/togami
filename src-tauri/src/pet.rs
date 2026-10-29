@@ -176,7 +176,11 @@ pub async fn pet_show(app: AppHandle, pos: Option<(i32, i32)>) -> Result<(), Str
     if let Some(w) = app.get_webview_window(LABEL) {
         return w.show().map_err(|e| e.to_string());
     }
-    let w = WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::App("pet.html".into()))
+    let builder = WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::App("pet.html".into()));
+    // macOS: stay on screen in every Space, and keep animating while Togami is in the background
+    #[cfg(target_os = "macos")]
+    let builder = builder.visible_on_all_workspaces(true).background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled);
+    let w = builder
         .title("Togami pet")
         .additional_browser_args(crate::tray::BROWSER_ARGS)
         .inner_size(width, height)

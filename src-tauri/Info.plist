@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged into the macOS app's Info.plist by the Tauri bundler. -->
+<plist version="1.0">
+<dict>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Togami reads the address of the tab in front to block distracting sites during a session, and shows what Spotify or Music is playing.</string>
+  <!-- keep the timer and the blocker running at full speed while Togami is in the background -->
+  <key>NSAppSleepDisabled</key>
+  <true/>
+</dict>
+</plist>

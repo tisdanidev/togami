@@ -8,6 +8,7 @@
   },
   "app": {
     "withGlobalTauri": true,
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -17,6 +18,7 @@
         "minWidth": 760,
         "minHeight": 560,
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,IntensiveWakeUpThrottling,CalculateNativeWinOcclusion --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows",
+        "backgroundThrottling": "disabled",
         "center": true
       }
     ],
@@ -33,7 +35,8 @@
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
-      "icons/icon.ico"
+      "icons/icon.ico",
+      "icons/icon.png"
     ],
     "shortDescription": "Focus timer and distraction blocker",
     "longDescription": "Togami blocks distracting apps and sites while you study, and makes quitting a session cost something.",

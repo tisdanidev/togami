@@ -6,6 +6,10 @@
 // A hidden WebView2 page has its timers slowed down, so the window gets a
 // heartbeat event every second that drives the UI's clock loop, and every
 // window is started with Chromium flags that turn background throttling off.
+//
+// macOS: the tray icon sits in the menu bar (its menu opens on click), the
+// Dock icon brings the window back, and ⌘Q in the app menu goes through the
+// UI like the tray's Quit. App Nap is off (NSAppSleepDisabled in Info.plist).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -29,7 +33,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let mut tray = TrayIconBuilder::with_id("main")
         .tooltip(&name)
         .menu(&menu)
-        .show_menu_on_left_click(false)
+        .show_menu_on_left_click(cfg!(target_os = "macos"))
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => crate::pet::show_main(app.clone()),
             id => {
@@ -37,6 +41,9 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
             }
         })
         .on_tray_icon_event(|tray, event| {
+            if cfg!(target_os = "macos") {
+                return;
+            }
             if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
                 crate::pet::show_main(tray.app_handle().clone());
             }
@@ -70,7 +77,11 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
                     .notification()
                     .builder()
                     .title(format!("{name} is still running"))
-                    .body("The timer and blocking keep going. Use the tray icon to open or quit it.")
+                    .body(if cfg!(target_os = "macos") {
+                        "The timer and blocking keep going. Use the menu bar icon or the Dock to open it."
+                    } else {
+                        "The timer and blocking keep going. Use the tray icon to open or quit it."
+                    })
                     .show();
             }
         }
@@ -84,4 +95,35 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
 #[tauri::command]
 pub fn app_exit(app: AppHandle) {
     app.exit(0);
+}
+
+/// macOS app menu. Quit is Togami's own item so that ⌘Q asks first during a
+/// session; Edit makes copy and paste work in text fields.
+#[cfg(target_os = "macos")]
+pub fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    use tauri::menu::{PredefinedMenuItem as P, Submenu};
+    let name = app.package_info().name.clone();
+    let quit = MenuItem::with_id(app, "app-quit", format!("Quit {name}"), true, Some("CmdOrCtrl+Q"))?;
+    let about = P::about(app, Some(&format!("About {name}")), None)?;
+    let main = Submenu::with_items(
+        app,
+        &name,
+        true,
+        &[&about, &P::separator(app)?, &P::hide(app, None)?, &P::hide_others(app, None)?, &P::show_all(app, None)?, &P::separator(app)?, &quit],
+    )?;
+    let edit = Submenu::with_items(
+        app,
+        "Edit",
+        true,
+        &[&P::undo(app, None)?, &P::redo(app, None)?, &P::separator(app)?, &P::cut(app, None)?, &P::copy(app, None)?, &P::paste(app, None)?, &P::select_all(app, None)?],
+    )?;
+    let window = Submenu::with_items(app, "Window", true, &[&P::minimize(app, None)?, &P::fullscreen(app, None)?, &P::close_window(app, None)?])?;
+    Menu::with_items(app, &[&main, &edit, &window])
+}
+
+#[cfg(target_os = "macos")]
+pub fn on_app_menu(app: &AppHandle, event: tauri::menu::MenuEvent) {
+    if event.id().as_ref() == "app-quit" {
+        let _ = app.emit_to("main", "tray-act", "quit");
+    }
 }

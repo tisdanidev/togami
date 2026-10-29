@@ -13,6 +13,7 @@
         "minWidth": 760,
         "minHeight": 560,
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,IntensiveWakeUpThrottling,CalculateNativeWinOcclusion --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows",
+        "backgroundThrottling": "disabled",
         "center": true,
         "url": "index.html?flavor=dev"
       }
@@ -24,7 +25,8 @@
       "icons-dev/32x32.png",
       "icons-dev/128x128.png",
       "icons-dev/128x128@2x.png",
-      "icons-dev/icon.ico"
+      "icons-dev/icon.ico",
+      "icons-dev/icon.png"
     ],
     "shortDescription": "Togami test build"
   }

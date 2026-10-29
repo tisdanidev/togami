@@ -345,7 +345,7 @@ body.dev .zen .z-hint::before { content: 'DEV · '; color: #d9772b; font-weight:
 .sample { font: 500 10px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--faint); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; margin-left: 6px; vertical-align: 1px; }
 
 /* ---------- overlay + modal ---------- */
-.overlay { position: fixed; inset: 0; z-index: 50; background: var(--scrim); backdrop-filter: blur(6px); display: grid; place-items: center; padding: 20px; animation: fade .18s ease-out; overflow-y: auto; }
+.overlay { position: fixed; inset: 0; z-index: 50; background: var(--scrim); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); display: grid; place-items: center; padding: 20px; animation: fade .18s ease-out; overflow-y: auto; }
 @keyframes fade { from { opacity: 0; } }
 .modal {
   width: min(460px, 100%); background: var(--surface); border: 1px solid var(--border); border-radius: 12px;

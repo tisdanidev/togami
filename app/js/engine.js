@@ -14,7 +14,8 @@ export const RULES = {
   closedGapMs: 60_000, // app gone this long during a session counts as a quit
 };
 
-export const ALWAYS_ALLOWED = ['Windows', 'Settings', 'Task Manager', 'Togami'];
+/** Never blocked, whatever the lists say (Windows and macOS names; the native side also protects these). */
+export const ALWAYS_ALLOWED = ['Windows', 'Settings', 'Task Manager', 'Finder', 'System Settings', 'Activity Monitor', 'Togami'];
 
 export function defaultState() {
   return {
