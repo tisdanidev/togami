@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">"Togami"</string>
+    <string name="main_activity_title">"Togami"</string>
+    <string name="block_service_label">"Togami blocking"</string>
+    <string name="block_service_summary">"Blocks the apps and sites on your Togami blocklist during focus sessions."</string>
+    <string name="block_service_description">"During a focus session or lockout, Togami checks which app is in front and, in a browser, the address bar. If it is on your blocklist, Togami goes to the home screen and opens on top. Nothing is read outside sessions, and nothing is saved or sent anywhere."</string>
+    <string name="media_listener_label">"Togami now playing"</string>
+</resources>

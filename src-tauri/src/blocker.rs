@@ -7,6 +7,9 @@
 //     Windows: Chrome, Edge, Firefox; the address bar is read with UI Automation.
 //     macOS: Safari, Chrome, Edge, Brave, Arc (address read with AppleScript)
 //     and Firefox (address bar read with Accessibility).
+//     Android: an Accessibility service (gen/android) reports the app in front
+//     and reads the browser's address bar; blocked apps and sites are sent to
+//     the home screen and Togami opens on top.
 // Then Togami comes to the front and the UI shows its block screen.
 
 use crate::rules::{is_browser, match_target};
@@ -15,13 +18,15 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, target_os = "macos", target_os = "android"))]
 use tauri_plugin_notification::NotificationExt;
 
 #[cfg(target_os = "macos")]
 use mac as os;
 #[cfg(windows)]
 use win as os;
+#[cfg(target_os = "android")]
+use droid as os;
 
 #[derive(Default, Clone, Deserialize, Debug)]
 pub struct Config {
@@ -85,7 +90,7 @@ pub fn start(app: AppHandle) {
         let mut last_emit: Option<(String, Instant)> = None;
         let mut grace: Option<Grace> = None;
         let mut recent: HashMap<String, Instant> = HashMap::new();
-        #[cfg(any(windows, target_os = "macos"))]
+        #[cfg(any(windows, target_os = "macos", target_os = "android"))]
         let mut address_bar = os::AddressBar::new();
         #[cfg(target_os = "macos")]
         let mut asked_access = false;
@@ -102,7 +107,7 @@ pub fn start(app: AppHandle) {
                 asked_access = true;
                 crate::macos::trusted(true);
             }
-            #[cfg(any(windows, target_os = "macos"))]
+            #[cfg(any(windows, target_os = "macos", target_os = "android"))]
             {
                 let hit = os::foreground().and_then(|fg| {
                     let url = if is_browser(&fg.exe) && !cfg.sites.is_empty() { address_bar.as_mut().and_then(|a| a.read(&fg)) } else { None };
@@ -152,6 +157,8 @@ pub fn start(app: AppHandle) {
                 let again = last_emit.as_ref().is_some_and(|(t, at)| *t == target && at.elapsed() < Duration::from_millis(1500));
                 if !again {
                     last_emit = Some((target.clone(), Instant::now()));
+                    // Android: push_away already brought Togami to the front
+                    #[cfg(desktop)]
                     if let Some(w) = app.get_webview_window("main") {
                         let _ = w.unminimize();
                         let _ = w.show();
@@ -160,7 +167,7 @@ pub fn start(app: AppHandle) {
                     let _ = app.emit("blocked-attempt", Attempt { target, kind, stage: "block", warned });
                 }
             }
-            #[cfg(not(any(windows, target_os = "macos")))]
+            #[cfg(not(any(windows, target_os = "macos", target_os = "android")))]
             let _ = (&cfg, &mut last_emit, &mut grace, &mut recent, &app, &seen);
         }
     });
@@ -436,5 +443,54 @@ mod mac {
             }
         }
         macos::command_key(fg.pid, KEY_W);
+    }
+}
+
+// ---------- Android ----------
+
+#[cfg(target_os = "android")]
+mod droid {
+    /// The app in front, as the Accessibility service saw it. `exe` is a
+    /// browser's short name ("chrome", "samsunginternet") or the app's label
+    /// and package ("Instagram com.instagram.android").
+    pub struct Foreground {
+        pub exe: String,
+        pub title: String,
+        pub url: Option<String>,
+        pub package: String,
+    }
+
+    impl Foreground {
+        /// Tells apps apart for the grace period.
+        pub fn key(&self) -> isize {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            self.package.hash(&mut h);
+            h.finish() as isize
+        }
+    }
+
+    pub fn foreground() -> Option<Foreground> {
+        let f = crate::android::foreground()?;
+        Some(Foreground { exe: f.exe, title: f.title.unwrap_or_default(), url: f.url, package: f.package })
+    }
+
+    /// The service reads the address bar along with the app in front.
+    pub struct AddressBar;
+
+    impl AddressBar {
+        pub fn new() -> Option<Self> {
+            Some(Self)
+        }
+
+        pub fn read(&mut self, fg: &Foreground) -> Option<String> {
+            fg.url.clone()
+        }
+    }
+
+    /// Sends the blocked app (or the browser on a blocked site) to the home
+    /// screen and opens Togami on top.
+    pub fn push_away(fg: &Foreground, kind: &str) {
+        crate::android::push_away(&fg.package, kind);
     }
 }

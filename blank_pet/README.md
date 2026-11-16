@@ -46,6 +46,7 @@ Other files (like this README or a font licence) are left out when the pack is i
 - `nameHighlight` (optional) wraps random letters of the name in `<b>` (Persona 5 inverts one): `{ "minimum name length": letters }`. Leave it out for a plain name.
 - `expressions`: `intro` frames play when the pet switches to that expression, `open` is the resting frame, `closed` (optional) is used for blinking.
 - `idle` is the expression the pet goes back to after speaking.
+- `personality` (optional) describes the character to Togami's Ask chat (AI help), in one to three sentences (up to 800 characters). Replies come in that character, and the pet says the first sentence of each in its speech box.
 - `lines`: for each moment, a list of `{ "e": expression, "t": text }`. One is picked at random. Moments: `hello`, `workStart`, `breakStart`, `breakEnd`, `sessionEnd`, `blockWarn`, `block`, `pauseRequested`, `paused`, `resumed`, `quit`, `lockout`, `lockoutEnded`, `pardon`, `update`, `idle`, `late`, `poke`. Text can use `{intention}`, `{min}`, `{target}` and `{version}`; a line is only used when every placeholder has a value. Moments with no usable line fall back to plain built-in ones.
 
 ## layout.html

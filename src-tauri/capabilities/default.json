@@ -1,15 +1,18 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "What the Togami windows (main and the desktop pet) may do",
+  "description": "What the Togami windows (main, the desktop pet, the Ask chat and the screen snip) may do",
   "windows": [
     "main",
-    "pet"
+    "pet",
+    "chat",
+    "snip"
   ],
   "permissions": [
     "core:default",
     "core:window:allow-set-fullscreen",
     "core:window:allow-is-fullscreen",
-    "core:window:allow-start-dragging"
+    "core:window:allow-start-dragging",
+    "notification:default"
   ]
 }

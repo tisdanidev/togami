@@ -12,13 +12,22 @@
 //   punctuation, hold, holdPerChar }, nameHighlight?: { minLength: letters },
 //   idle, expressions: { name: { intro?: [files], open, closed? } },
 //   lines: { moment: [{ e: expression, t: text }] } }.
-// Lines can use {intention}, {min}, {target} and {version}.
+// Lines can use {intention}, {min}, {target} and {version}. An optional
+// "personality" describes the character to the Ask chat.
 //
 // layout.html must have #card, #sprite (an img), #bubble and #text; #name,
 // #menu and #badge are optional. pet.js only toggles classes on them (see
 // README.md), so style.css decides how everything looks and moves.
 
-const T = globalThis.__TAURI__;
+// Android runs the pet in a frame of the main page and reads the pack through its bridge.
+const PT = (() => {
+  try {
+    return parent !== window ? parent.__TAURI__ : undefined;
+  } catch {
+    return undefined;
+  }
+})();
+const T = PT ? undefined : globalThis.__TAURI__;
 const $ = (s) => document.querySelector(s);
 const stage = $('#stage');
 
@@ -46,15 +55,58 @@ const FALLBACK = {
   poke: [{ t: 'Hey there!' }],
 };
 
-// ---------- host: desktop window or browser iframe ----------
+// ---------- host: desktop window, browser iframe or Android frame ----------
 
-const host = T
+/** The frame's side of the page's messages (browser build and Android). */
+const framed = {
+  onSay: (fn) => addEventListener('message', (e) => e.data?.type === 'say' && fn(e.data)),
+  onLine: (fn) => addEventListener('message', (e) => e.data?.type === 'line' && fn(e.data)),
+  onState: (fn) => addEventListener('message', (e) => e.data?.type === 'state' && fn(e.data.state)),
+  hit: (rects) => parent.postMessage({ type: 'pet-hit', rects }, '*'),
+  act: (act, data = {}) => parent.postMessage({ type: 'pet-act', act, ...data }, '*'),
+  drag() {},
+};
+
+/** Android: the page passes on taps (x, y in this frame) since touch can't hover into it. */
+function touchInit() {
+  const mouse = (type, el, x, y) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerdown' ? 1 : 0, clientX: x, clientY: y, screenX: x, screenY: y, pointerType: 'touch' }));
+  addEventListener('message', (e) => {
+    const { type, x, y } = e.data || {};
+    if (type === 'touch-outside') {
+      dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      return;
+    }
+    const el = type && document.elementFromPoint(x, y);
+    if (!el) return;
+    if (type === 'touch-menu') {
+      el.closest('#card')?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+    } else if (type === 'touch-tap') {
+      if (el.closest('#badge, #menu, #bubble')) el.click();
+      else if (el.closest('#card')) {
+        mouse('pointerdown', el, x, y);
+        mouse('pointerup', el, x, y);
+      }
+    }
+  });
+}
+
+const host = PT
+  ? {
+      async load() {
+        const { manifest, files, texts } = await PT.core.invoke('pet_pack');
+        return { manifest, src: (f) => files[f] ?? null, text: async (f) => texts[f] ?? '' };
+      },
+      ...framed,
+      init: touchInit,
+    }
+  : T
   ? {
       async load() {
         const { manifest, files, texts } = await T.core.invoke('pet_pack');
         return { manifest, src: (f) => files[f] ?? null, text: async (f) => texts[f] ?? '' };
       },
       onSay: (fn) => T.event.listen('pet-say', (e) => fn(e.payload)),
+      onLine: (fn) => T.event.listen('pet-line', (e) => fn(e.payload)),
       onState: (fn) => T.event.listen('pet-state', (e) => fn(e.payload)),
       hit: (rects) => T.core.invoke('pet_hit', { rects }).catch(() => {}),
       act(act, data = {}) {
@@ -85,11 +137,7 @@ const host = T
           },
         };
       },
-      onSay: (fn) => addEventListener('message', (e) => e.data?.type === 'say' && fn(e.data)),
-      onState: (fn) => addEventListener('message', (e) => e.data?.type === 'state' && fn(e.data.state)),
-      hit: (rects) => parent.postMessage({ type: 'pet-hit', rects }, '*'),
-      act: (act, data = {}) => parent.postMessage({ type: 'pet-act', act, ...data }, '*'),
-      drag() {},
+      ...framed,
       init() {
         // let clicks through to the page again once the pointer leaves the pet
         addEventListener('pointermove', (e) => {
@@ -109,7 +157,7 @@ let expr = null; // current expression name
 let busy = false; // playing intro frames
 let speaking = null; // { timer, typing }
 let lastLine = {};
-let app = null; // from Togami: { locked, lockoutMs, profiles, session }
+let app = null; // from Togami: { locked, lockoutMs, profiles, session, ai, snip }
 let flipped = false;
 try {
   flipped = localStorage.getItem('togami.pet.flip') === '1';
@@ -136,6 +184,8 @@ async function boot() {
   blinkLoop();
   setInterval(sendHit, 250);
   host.onSay(({ moment, vars }) => say(moment, vars));
+  // the Ask chat's replies, word for word
+  host.onLine(({ text }) => typeof text === 'string' && text.trim() && speak({ t: text.trim().slice(0, 240) }));
   host.onState((s) => {
     app = s;
     renderBadge();
@@ -281,10 +331,15 @@ function pickLine(moment, vars) {
   return { e: line.e, t: line.t.replace(/\{(\w+)\}/g, (_, k) => String(vars[k])) };
 }
 
-async function say(moment, vars = {}) {
+function say(moment, vars = {}) {
   if (!pack || !card) return;
   const line = pickLine(moment, vars);
-  if (!line) return;
+  if (line) speak(line);
+}
+
+/** Type out a line ({ e: expression, t: text }) in the speech box. */
+async function speak(line) {
+  if (!pack || !card) return;
   stopSpeaking();
   hideMenu();
   const me = (speaking = { timer: 0 });
@@ -386,6 +441,8 @@ function wire() {
       say('lockout', { min: Math.ceil((app?.lockoutMs ?? 0) / 60_000) });
     } else if (act === 'start') {
       host.act('start', { id: btn.dataset.id });
+    } else if (act === 'talk' && app?.ai) {
+      host.act('chat');
     } else if (act === 'talk') {
       const h = new Date().getHours();
       say(h >= 0 && h < 5 ? 'late' : Math.random() < 0.5 ? 'poke' : 'idle');
@@ -424,7 +481,9 @@ function renderMenu(view) {
   if (app && !app.session) {
     first = app.locked ? item('locked', `Locked · ${Math.ceil(app.lockoutMs / 60_000)} min`, 'class="off"') : item('startMenu', 'Start focus');
   }
-  menu.innerHTML = first + item('open', 'Open Togami') + item('talk', 'Talk') + item('flip', 'Turn around') + item('hide', 'Hide');
+  // with AI help set up, Talk opens the Ask chat and the screen can be explained
+  const snip = app?.ai && app.snip ? item('snip', 'Explain my screen') : '';
+  menu.innerHTML = first + item('open', 'Open Togami') + item('talk', 'Talk') + snip + item('flip', 'Turn around') + item('hide', 'Hide');
 }
 
 // ---------- timer badge (while a session runs) ----------

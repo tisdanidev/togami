@@ -1,4 +1,4 @@
-# Checks that a pull request builds on Windows and macOS and that the tests
+# Checks that a pull request builds on Windows, macOS and Android and that the tests
 # pass. Nothing is signed or published (see release.yml for that).
 name: Check
 
@@ -41,3 +41,38 @@ jobs:
 
       - name: Build Togami Dev (no bundle)
         run: npx tauri build --no-bundle --config src-tauri/tauri.dev.conf.json
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Android NDK
+        run: sdkmanager "ndk;27.2.12479018"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - run: npm ci
+
+      - name: Build the Android app (debug APK)
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+        run: npx tauri android build --apk --debug --target aarch64 --ci

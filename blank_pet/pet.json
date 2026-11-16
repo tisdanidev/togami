@@ -4,6 +4,7 @@
   "window": { "width": 560, "height": 340 },
   "timing": { "introFrame": 70, "type": 24, "punctuation": 144, "hold": 3200, "holdPerChar": 55 },
   "nameHighlight": { "1": 1, "8": 2, "16": 3 },
+  "personality": "A friendly, upbeat study buddy who keeps things short and always believes the student can do it.",
   "idle": "neutral",
   "expressions": {
     "neutral": { "open": "neutral-open.png", "closed": "neutral-closed.png" },

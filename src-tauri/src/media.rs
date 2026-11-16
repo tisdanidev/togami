@@ -2,10 +2,12 @@
 // volume flyout): Spotify, browsers, Apple Music, Media Player and others.
 // macOS: Spotify and Apple Music, asked with AppleScript (macOS keeps its
 // system-wide now playing to Apple's own apps since 15.4).
+// Android: the active media sessions (any player), read by the notification
+// listener in gen/android once notification access is allowed.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Clone, Default)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct NowPlaying {
     pub title: String,
@@ -27,7 +29,11 @@ pub async fn media_now() -> Option<NowPlaying> {
     {
         return tauri::async_runtime::spawn_blocking(mac::now).await.ok().flatten();
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "android")]
+    {
+        return tauri::async_runtime::spawn_blocking(crate::android::media_now).await.ok().flatten();
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "android")))]
     None
 }
 
@@ -41,7 +47,11 @@ pub async fn media_control(action: String) {
     {
         let _ = tauri::async_runtime::spawn_blocking(move || mac::control(&action)).await;
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "android")]
+    {
+        let _ = tauri::async_runtime::spawn_blocking(move || crate::android::media_control(&action)).await;
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "android")))]
     let _ = action;
 }
 

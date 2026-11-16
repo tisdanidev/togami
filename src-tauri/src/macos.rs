@@ -62,6 +62,9 @@ extern "C" {
     fn CGEventCreateKeyboardEvent(source: CFTypeRef, key: u16, down: bool) -> CFTypeRef;
     fn CGEventSetFlags(event: CFTypeRef, flags: u64);
     fn CGEventPostToPid(pid: i32, event: CFTypeRef);
+    // Screen Recording (snips), macOS 10.15+
+    fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGRequestScreenCaptureAccess() -> bool;
 }
 
 #[link(name = "objc")]
@@ -151,6 +154,20 @@ pub fn trusted(prompt: bool) -> bool {
             return AXIsProcessTrusted() != 0;
         };
         AXIsProcessTrustedWithOptions(options.0) != 0
+    }
+}
+
+// ---------- Screen Recording ----------
+
+/// May Togami capture the screen (for snips)? With `prompt`, macOS asks the
+/// user (once; after that it's System Settings > Privacy & Security > Screen Recording).
+pub fn screen_trusted(prompt: bool) -> bool {
+    unsafe {
+        if prompt {
+            CGRequestScreenCaptureAccess()
+        } else {
+            CGPreflightScreenCaptureAccess()
+        }
     }
 }
 

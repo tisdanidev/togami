@@ -3,7 +3,9 @@
 // it is tested on any OS:  rustc --edition 2021 --test src/rules.rs
 //
 // "exe" is the executable's name on Windows ("chrome") and the app bundle's
-// name on macOS ("Google Chrome").
+// name on macOS ("Google Chrome"). On Android it is a browser's short name
+// ("chrome", "samsunginternet"), or an app's label and package
+// ("Instagram com.instagram.android"); see BlockService.kt.
 
 /// Processes that are never touched, whatever the lists say.
 const NEVER: &[&str] = &[
@@ -18,6 +20,8 @@ const BROWSERS: &[&str] = &[
     // macOS
     "safari", "safaritechnologypreview", "googlechrome", "googlechromebeta", "googlechromecanary", "microsoftedge", "microsoftedgebeta", "bravebrowser",
     "firefoxdeveloperedition", "firefoxnightly", "zenbrowser", "orion",
+    // Android (names given by BlockService.kt; Chrome, Edge, Firefox, Brave and others share the ones above)
+    "samsunginternet", "duckduckgo",
 ];
 
 const BROWSER_NAMES: &[&str] = &[
@@ -177,6 +181,8 @@ pub fn match_title(sites: &[String], title: &str) -> Option<String> {
 }
 
 /// "Spotify.exe" / "MSEdge" / "SpotifyAB.SpotifyMusic_...!Spotify" -> a readable name
+/// (Windows and macOS; Android names the player from its app label)
+#[cfg_attr(target_os = "android", allow(dead_code))]
 pub fn source_name(app_id: &str) -> String {
     let l = app_id.to_lowercase();
     for (needle, name) in [
@@ -377,6 +383,31 @@ mod tests {
         assert!(m(&c, "Taskmgr", "Task Manager").is_none());
         assert!(m(&c, "explorer", "Downloads").is_none());
         assert!(m(&c, "togami", "Togami").is_none());
+    }
+
+    #[test]
+    fn android_apps_and_browsers() {
+        let c = cfg();
+        // apps: the label and the package, as BlockService sends them
+        assert_eq!(m(&c, "Discord com.discord", ""), Some(("Discord".into(), "app")));
+        assert_eq!(m(&c, "Steam com.valvesoftware.android.steam.community", ""), Some(("Steam".into(), "app")));
+        assert!(m(&c, "Notes com.samsung.android.app.notes", "").is_none());
+        // browsers: the address bar as each one shows it (no title on Android)
+        for (exe, url) in [
+            ("chrome", "youtube.com"),
+            ("chrome", "m.youtube.com/watch?v=1"),
+            ("msedge", "https://m.youtube.com/shorts/abc"),
+            ("firefox", "youtube.com/watch?v=1"),
+            ("samsunginternet", "m.youtube.com"),
+            ("duckduckgo", "https://www.youtube.com/"),
+            ("brave", "youtube.com"),
+        ] {
+            assert_eq!(mu(&c, exe, "", url), Some(("youtube.com".into(), "site")), "{exe}: {url}");
+        }
+        // a search being typed, or another site
+        assert!(mu(&c, "chrome", "", "youtube funny cats").is_none());
+        assert!(mu(&c, "samsunginternet", "", "en.m.wikipedia.org/wiki/Cat").is_none());
+        assert!(is_browser("samsunginternet") && is_browser("duckduckgo"));
     }
 
     #[test]
