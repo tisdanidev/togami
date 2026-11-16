@@ -12,6 +12,7 @@ export const RULES = {
   pardonEvery: 5, // completed sessions per pardon
   pardonMax: 3,
   closedGapMs: 60_000, // app gone this long during a session counts as a quit
+  stopwatchMaxMs: 8 * 60 * MIN, // a stopwatch session finishes on its own after this
 };
 
 /** Never blocked, whatever the lists say (Windows and macOS names; the native side also protects these). */
@@ -21,12 +22,15 @@ export function defaultState() {
   return {
     version: 1,
     profiles: [
-      profile('essay', 'Essay', 50, 10, 20, 3, ['Discord', 'Steam'], ['youtube.com', 'reddit.com', 'tiktok.com', 'instagram.com']),
-      profile('revision', 'Revision', 25, 5, 15, 4, ['Discord', 'Steam', 'Epic Games'], ['youtube.com', 'reddit.com', 'tiktok.com', 'instagram.com', 'x.com', 'twitch.tv']),
-      profile('deep', 'Deep work', 90, 20, 20, 2, ['Discord', 'Steam', 'Epic Games', 'WhatsApp'], ['youtube.com', 'reddit.com', 'tiktok.com', 'instagram.com', 'x.com', 'twitch.tv', 'netflix.com']),
+      profile('essay', 'Essay', 50, 10, 20, 3),
+      profile('revision', 'Revision', 25, 5, 15, 4),
+      profile('deep', 'Deep work', 90, 20, 20, 2),
+      stopwatchProfile(),
       customProfile(),
     ],
     profileId: 'essay',
+    // one blocklist for every session type and lockout
+    blocklist: { apps: ['Discord', 'Steam', 'Epic Games'], sites: ['youtube.com', 'reddit.com', 'tiktok.com', 'instagram.com', 'x.com', 'twitch.tv'] },
     allowlist: ['docs.google.com', 'Calculator'],
     settings: { voice: 'neutral', theme: 'system', blockBreaks: false, sidebar: true, sounds: true, notify: true, pet: false },
     session: null,
@@ -42,17 +46,28 @@ export function defaultState() {
   };
 }
 
-function profile(id, name, focus, brk, long, cycles, apps, sites) {
-  return { id, name, focusMin: focus, breakMin: brk, longBreakMin: long, cycles, apps, sites };
+function profile(id, name, focus, brk, long, cycles) {
+  return { id, name, focusMin: focus, breakMin: brk, longBreakMin: long, cycles };
+}
+
+/** The "Stopwatch" session type: no set length, it counts up. It can be finished
+ *  once `minMin` minutes have passed; ending it before then is a quit. Can't be deleted. */
+function stopwatchProfile() {
+  return { id: 'stopwatch', name: 'Stopwatch', minMin: 25, stopwatch: true };
 }
 
 /** The "Custom" session type, edited straight from the Focus page. Always last, can't be deleted. */
 function customProfile() {
-  return { ...profile('custom', 'Custom', 40, 8, 0, 2, ['Discord', 'Steam'], ['youtube.com', 'reddit.com', 'tiktok.com', 'instagram.com']), custom: true };
+  return { ...profile('custom', 'Custom', 40, 8, 0, 2), custom: true };
 }
 
-/** Limits for timer fields, shared by Settings and the Custom editor. */
-export const LIMITS = { focusMin: [5, 180], breakMin: [1, 60], longBreakMin: [0, 60], cycles: [1, 8] };
+/** Stopwatch and Custom: built in, set on the Focus page, kept at the end of the list. */
+export function isBuiltIn(p) {
+  return Boolean(p.custom || p.stopwatch);
+}
+
+/** Limits for timer fields, shared by Settings and the Custom and Stopwatch editors. */
+export const LIMITS = { focusMin: [5, 180], breakMin: [1, 60], longBreakMin: [0, 60], cycles: [1, 8], minMin: [5, 180] };
 
 export function clampField(field, value, fallback) {
   const [lo, hi] = LIMITS[field];
@@ -64,11 +79,24 @@ export function clampField(field, value, fallback) {
 export function normalizeState(s) {
   const d = defaultState();
   const out = { ...d, ...s, settings: { ...d.settings, ...s.settings } };
-  out.profiles = (out.profiles || []).filter((p) => !p.custom);
-  const savedCustom = (s.profiles || []).find((p) => p.custom);
-  out.profiles.push(savedCustom ?? customProfile());
+  const saved = s.profiles || [];
+  if (!s.blocklist && saved.some((p) => p.apps || p.sites)) {
+    // before 0.5 each session type had its own lists: merge them into one
+    out.blocklist = { apps: mergeLists(saved.map((p) => p.apps || [])), sites: mergeLists(saved.map((p) => p.sites || [])) };
+  }
+  const strip = ({ apps, sites, ...p }) => p;
+  out.profiles = saved.filter((p) => !isBuiltIn(p)).map(strip);
+  out.profiles.push(saved.find((p) => p.stopwatch) ?? stopwatchProfile());
+  out.profiles.push(strip(saved.find((p) => p.custom) ?? customProfile()));
   if (!out.profiles.some((p) => p.id === out.profileId)) out.profileId = out.profiles[0].id;
   return out;
+}
+
+/** Join lists, keeping the first spelling of each entry (case-insensitive). */
+function mergeLists(lists) {
+  const seen = new Map();
+  for (const x of lists.flat()) if (x && !seen.has(x.toLowerCase())) seen.set(x.toLowerCase(), x);
+  return [...seen.values()];
 }
 
 // ---------- time helpers ----------
@@ -86,8 +114,10 @@ export function getProfile(state, id = state.profileId) {
   return state.profiles.find((p) => p.id === id) ?? state.profiles[0];
 }
 
-/** Focus, break, focus, break ... long break replaces the last break. */
+/** Focus, break, focus, break ... long break replaces the last break.
+ *  A stopwatch is one open focus phase; its `ms` is the minimum before it can be finished. */
 export function buildPlan(p, debtMs = 0) {
+  if (p.stopwatch) return [{ kind: 'focus', ms: p.minMin * MIN + debtMs, open: true }];
   const plan = [];
   for (let i = 0; i < p.cycles; i++) {
     plan.push({ kind: 'focus', ms: p.focusMin * MIN + (i === 0 ? debtMs : 0) });
@@ -95,6 +125,11 @@ export function buildPlan(p, debtMs = 0) {
   }
   if (p.longBreakMin > 0 && p.cycles > 1) plan.push({ kind: 'long', ms: p.longBreakMin * MIN });
   return plan;
+}
+
+/** How long a phase runs before it ends on its own. */
+function phaseLength(phase) {
+  return phase.open ? RULES.stopwatchMaxMs : phase.ms;
 }
 
 // ---------- derived state ----------
@@ -124,7 +159,10 @@ export function sessionView(state, now) {
     phase,
     phaseIndex: s.phaseIndex,
     elapsed,
-    remaining,
+    remaining, // stopwatch: time left before it can be finished
+    open: Boolean(phase.open),
+    canFinish: Boolean(phase.open) && remaining === 0,
+    canPause: phase.kind === 'focus' && pause === 'none' && !s.heldAt && (Boolean(phase.open) || remaining > RULES.pauseWaitMs),
     focusIndex,
     focusTotal,
     pause,
@@ -135,14 +173,14 @@ export function sessionView(state, now) {
   };
 }
 
-/** Whether blocking is on, and why. */
+/** Whether blocking is on, and why. The same blocklist applies to every session type. */
 export function blocking(state, now) {
-  if (lockoutActive(state, now)) return { on: true, why: 'lockout', profile: getProfile(state, state.lockout.profileId) };
+  if (lockoutActive(state, now)) return { on: true, why: 'lockout' };
   const v = sessionView(state, now);
   if (!v) return { on: false };
   if (v.pause === 'paused') return { on: false, why: 'paused' };
   if (v.phase.kind !== 'focus' && !state.settings.blockBreaks && !v.held) return { on: false, why: 'break' };
-  return { on: true, why: 'session', profile: getProfile(state, state.session.profileId) };
+  return { on: true, why: 'session' };
 }
 
 /** Is `target` (an app name or a site) blocked right now? */
@@ -151,7 +189,7 @@ export function isBlocked(state, target, now) {
   if (!b.on) return false;
   const t = target.toLowerCase();
   if ([...ALWAYS_ALLOWED, ...state.allowlist].some((a) => a.toLowerCase() === t)) return false;
-  return [...b.profile.apps, ...b.profile.sites].some((x) => {
+  return [...state.blocklist.apps, ...state.blocklist.sites].some((x) => {
     const x2 = x.toLowerCase();
     return x2 === t || t.endsWith('.' + x2);
   });
@@ -174,6 +212,14 @@ function skippedFocusMs(state, now) {
   let ms = v.phase.kind === 'focus' ? v.remaining : 0;
   for (const p of s.plan.slice(s.phaseIndex + 1)) if (p.kind === 'focus') ms += p.ms;
   return ms;
+}
+
+/** Focus time done so far in the session. */
+function focusDoneMs(state, now) {
+  const s = state.session;
+  if (s.plan[0].open) return sessionView(state, now).elapsed;
+  const planned = s.plan.filter((p) => p.kind === 'focus').reduce((a, p) => a + p.ms, 0);
+  return Math.max(0, planned - skippedFocusMs(state, now));
 }
 
 /** What quitting right now would cost. */
@@ -228,7 +274,7 @@ export function tick(state, now) {
     // a requested pause takes effect after the wait, if still in the same focus phase
     if (s.pauseRequestedAt && !s.pausedAt) {
       const at = s.pauseRequestedAt + RULES.pauseWaitMs;
-      const phaseEnd = s.phaseStartedAt + s.phasePausedMs + s.plan[s.phaseIndex].ms;
+      const phaseEnd = s.phaseStartedAt + s.phasePausedMs + phaseLength(s.plan[s.phaseIndex]);
       if (at < phaseEnd && at <= now) {
         s.pausedAt = at;
         s.pauseRequestedAt = null;
@@ -245,7 +291,7 @@ export function tick(state, now) {
       events.push({ type: 'resumed', auto: true });
     }
     const phase = s.plan[s.phaseIndex];
-    const phaseEnd = s.phaseStartedAt + s.phasePausedMs + phase.ms;
+    const phaseEnd = s.phaseStartedAt + s.phasePausedMs + phaseLength(phase);
     if (phaseEnd > now) break;
     // phase over
     s.pauseRequestedAt = null;
@@ -263,7 +309,9 @@ export function tick(state, now) {
 
 function finish(state, at) {
   const s = state.session;
-  const focusMs = s.plan.filter((p) => p.kind === 'focus').reduce((a, p) => a + p.ms, 0);
+  const focusMs = s.plan[0].open
+    ? Math.min(RULES.stopwatchMaxMs, sessionView(state, at).elapsed)
+    : s.plan.filter((p) => p.kind === 'focus').reduce((a, p) => a + p.ms, 0);
   const entry = {
     id: s.id,
     type: 'complete',
@@ -291,6 +339,16 @@ function finish(state, at) {
   return events;
 }
 
+/** Stopwatch: end the session as finished. Only once the minimum has passed. */
+export function finishOpen(state, now) {
+  const v = sessionView(state, now);
+  if (!v?.open) return [];
+  if (!v.canFinish) return [{ type: 'error', message: `You can finish in ${Math.ceil(v.remaining / MIN)} min.` }];
+  if (state.session.pausedAt) resume(state, now);
+  if (state.session.heldAt) unhold(state, now);
+  return finish(state, now);
+}
+
 /** Record how the finished session went (the "did you finish?" question). */
 export function setOutcome(state, id, outcome) {
   const e = state.ledger.find((x) => x.id === id && x.type === 'complete');
@@ -308,7 +366,7 @@ export function requestPause(state, now) {
     s.pauses++;
     return [{ type: 'paused' }];
   }
-  if (v.remaining <= RULES.pauseWaitMs) return [{ type: 'error', message: 'Less than 2 minutes left. Finish this block first.' }];
+  if (!v.open && v.remaining <= RULES.pauseWaitMs) return [{ type: 'error', message: 'Less than 2 minutes left. Finish this block first.' }];
   s.pauseRequestedAt = now;
   return [{ type: 'pauseRequested' }];
 }
@@ -362,7 +420,7 @@ export function quit(state, { reason = '', usePardon = false, forced = false } =
     startedAt: s.startedAt,
     profileId: s.profileId,
     intention: s.intention,
-    focusMs: Math.max(0, planned - skippedFocusMs(state, now)),
+    focusMs: focusDoneMs(state, now),
     plannedFocusMs: planned,
     pauses: s.pauses,
     reason: reason.trim(),
@@ -396,7 +454,7 @@ export function emergency(state, now) {
     startedAt: s ? s.startedAt : now,
     profileId: s ? s.profileId : state.lockout.profileId,
     intention: s ? s.intention : '',
-    focusMs: s ? Math.max(0, s.plan.filter((p) => p.kind === 'focus').reduce((a, p) => a + p.ms, 0) - skippedFocusMs(state, now)) : 0,
+    focusMs: s ? focusDoneMs(state, now) : 0,
   });
   state.session = null;
   state.lockout = null;
@@ -413,6 +471,9 @@ export function recordAttempt(state, target, now) {
 export function checkClosedGap(state, lastSeenReal, nowReal, now) {
   if (state.dev || !state.session || !lastSeenReal) return [];
   if (nowReal - lastSeenReal < RULES.closedGapMs) return [];
+  // a stopwatch past its minimum could have been finished: finish it when Togami was last seen
+  const lastSeen = now - (nowReal - lastSeenReal);
+  if (sessionView(state, lastSeen).canFinish) return finishOpen(state, lastSeen);
   return quit(state, { reason: 'Togami was closed during the session', forced: true }, now);
 }
 

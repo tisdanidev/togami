@@ -5,18 +5,25 @@
 // Togami has no pet look of its own: see blank_pet/README.md). The window is transparent and lets
 // clicks through everywhere except the rectangles pet.html reports (the pet,
 // its speech box and its menu): a thread checks the cursor against them.
+//
+// Android has one window, so the pet runs in a frame inside it (platform.js);
+// only the pack commands below are used there.
 
 use serde_json::{json, Value};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use tauri::ipc::{InvokeBody, Request};
-use tauri::{AppHandle, LogicalSize, Manager, PhysicalPosition, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, State};
+#[cfg(desktop)]
+use tauri::{LogicalSize, PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
 
+#[cfg(desktop)]
 const LABEL: &str = "pet";
 /// Window size when pet.json doesn't give one, in CSS pixels.
+#[cfg(desktop)]
 const WIDTH: f64 = 560.0;
+#[cfg(desktop)]
 const HEIGHT: f64 = 340.0;
 const MAX_PACK_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -43,6 +50,7 @@ fn read_manifest(dir: &Path) -> Result<Value, String> {
 }
 
 /// The pet window's size from pet.json's "window", in CSS pixels.
+#[cfg(desktop)]
 fn window_size(manifest: &Value) -> (f64, f64) {
     let get = |k: &str, default: f64| manifest["window"][k].as_f64().unwrap_or(default).clamp(120.0, 1600.0);
     (get("width", WIDTH), get("height", HEIGHT))
@@ -69,6 +77,13 @@ fn file_type(name: &str) -> Option<&'static str> {
 pub fn pet_has_pack(app: AppHandle) -> Option<String> {
     let manifest = read_manifest(&pack_dir(&app).ok()?).ok()?;
     Some(manifest["name"].as_str().unwrap_or("Pet").to_string())
+}
+
+/// The pet's name and its optional "personality" from pet.json (for the Ask chat).
+#[tauri::command]
+pub fn pet_persona(app: AppHandle) -> Option<Value> {
+    let manifest = read_manifest(&pack_dir(&app).ok()?).ok()?;
+    Some(json!({ "name": manifest["name"].as_str().unwrap_or("Pet"), "personality": manifest["personality"].as_str() }))
 }
 
 /// The installed pack for pet.html: { manifest, files: { name: data URL },
@@ -148,6 +163,7 @@ pub async fn pet_import(app: AppHandle, request: Request<'_>) -> Result<String, 
     };
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::rename(&incoming, &dir).map_err(|e| e.to_string())?;
+    #[cfg(desktop)]
     if let Some(w) = app.get_webview_window(LABEL) {
         let (width, height) = window_size(&manifest);
         let _ = w.set_size(LogicalSize::new(width, height));
@@ -158,6 +174,7 @@ pub async fn pet_import(app: AppHandle, request: Request<'_>) -> Result<String, 
 
 #[tauri::command]
 pub fn pet_remove(app: AppHandle) -> Result<(), String> {
+    #[cfg(desktop)]
     if let Some(w) = app.get_webview_window(LABEL) {
         let _ = w.close();
     }
@@ -170,6 +187,13 @@ pub fn pet_remove(app: AppHandle) -> Result<(), String> {
 
 /// Shows the pet (creating its window the first time) at `pos`, a saved
 /// physical position, or bottom right of the primary screen.
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn pet_show() -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(desktop)]
 #[tauri::command]
 pub async fn pet_show(app: AppHandle, pos: Option<(i32, i32)>) -> Result<(), String> {
     let (width, height) = window_size(&read_manifest(&pack_dir(&app)?)?);
@@ -223,6 +247,7 @@ pub async fn pet_show(app: AppHandle, pos: Option<(i32, i32)>) -> Result<(), Str
 
 #[tauri::command]
 pub fn pet_hide(app: AppHandle) {
+    #[cfg(desktop)]
     if let Some(w) = app.get_webview_window(LABEL) {
         let _ = w.hide();
     }
@@ -236,14 +261,18 @@ pub fn pet_hit(hit: State<'_, Hit>, rects: Vec<[f64; 4]>) {
 /// Brings the main Togami window to the front (from the pet's menu).
 #[tauri::command]
 pub fn show_main(app: AppHandle) {
+    #[cfg(desktop)]
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
     }
+    #[cfg(mobile)]
+    let _ = app; // Android: there is only the main window
 }
 
 /// Lets clicks through the pet window except over the reported rectangles.
+#[cfg(desktop)]
 pub fn start(app: AppHandle) {
     let rects = app.state::<Hit>().0.clone();
     std::thread::spawn(move || {
@@ -251,11 +280,11 @@ pub fn start(app: AppHandle) {
         loop {
             let Some(w) = app.get_webview_window(LABEL) else {
                 last = None;
-                std::thread::sleep(Duration::from_millis(300));
+                std::thread::sleep(std::time::Duration::from_millis(300));
                 continue;
             };
             if !w.is_visible().unwrap_or(false) {
-                std::thread::sleep(Duration::from_millis(300));
+                std::thread::sleep(std::time::Duration::from_millis(300));
                 continue;
             }
             if let (Ok(cursor), Ok(origin), Ok(scale)) = (app.cursor_position(), w.inner_position(), w.scale_factor()) {
@@ -267,7 +296,7 @@ pub fn start(app: AppHandle) {
                     last = Some(over);
                 }
             }
-            std::thread::sleep(Duration::from_millis(40));
+            std::thread::sleep(std::time::Duration::from_millis(40));
         }
     });
 }

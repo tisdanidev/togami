@@ -258,3 +258,89 @@ test('clicking the timer stops it but keeps blocking on, even in a break', () =>
   assert.equal(E.sessionView(s, T0 + 78 * MIN).pause, 'paused');
   assert.deepEqual(E.hold(s, T0 + 79 * MIN), []);
 });
+
+test('one blocklist applies to every session type and to lockouts', () => {
+  const s = E.defaultState();
+  s.blocklist = { apps: ['Discord'], sites: ['youtube.com'] };
+  for (const id of ['essay', 'deep', 'stopwatch', 'custom']) {
+    E.start(s, { profileId: id }, T0);
+    assert.equal(E.isBlocked(s, 'Discord', T0 + MIN), true, id);
+    assert.equal(E.isBlocked(s, 'm.youtube.com', T0 + MIN), true, id);
+    assert.equal(E.isBlocked(s, 'reddit.com', T0 + MIN), false, id);
+    E.quit(s, {}, T0 + 2 * MIN);
+    assert.equal(E.isBlocked(s, 'Discord', T0 + 3 * MIN), true, `${id} lockout`);
+    s.lockout = null;
+  }
+});
+
+test('old per-type blocklists are merged into one when loading', () => {
+  const old = E.defaultState();
+  delete old.blocklist;
+  old.profiles[0].apps = ['Discord', 'Steam'];
+  old.profiles[0].sites = ['youtube.com'];
+  old.profiles[1].apps = ['discord', 'WhatsApp'];
+  old.profiles[1].sites = ['reddit.com'];
+  old.profiles = old.profiles.filter((p) => !p.stopwatch); // saved before Stopwatch existed
+  const s = E.normalizeState(old);
+  assert.deepEqual(s.blocklist, { apps: ['Discord', 'Steam', 'WhatsApp'], sites: ['youtube.com', 'reddit.com'] });
+  assert.ok(s.profiles.every((p) => !p.apps && !p.sites));
+  assert.deepEqual(s.profiles.slice(-2).map((p) => p.id), ['stopwatch', 'custom']);
+});
+
+test('stopwatch counts up, can be finished after the minimum, and ending early is a quit', () => {
+  const s = E.defaultState();
+  E.start(s, { profileId: 'stopwatch' }, T0);
+  let v = E.sessionView(s, T0 + 10 * MIN);
+  assert.equal(v.open, true);
+  assert.equal(v.elapsed, 10 * MIN);
+  assert.equal(v.remaining, 15 * MIN); // to the 25 min minimum
+  assert.equal(v.canFinish, false);
+  assert.equal(E.finishOpen(s, T0 + 10 * MIN)[0].type, 'error');
+  assert.equal(E.isBlocked(s, 'youtube.com', T0 + 10 * MIN), true);
+  // no phase change, however long it runs
+  assert.deepEqual(E.tick(s, T0 + 3 * 60 * MIN), []);
+  v = E.sessionView(s, T0 + 3 * 60 * MIN);
+  assert.equal(v.canFinish, true);
+  const ev = E.finishOpen(s, T0 + 3 * 60 * MIN);
+  assert.equal(ev[0].type, 'complete');
+  assert.equal(s.ledger.at(-1).focusMs, 3 * 60 * MIN);
+  assert.equal(s.streak, 1);
+
+  // quitting before the minimum: lockout, and the rest of the minimum becomes debt
+  E.start(s, { profileId: 'stopwatch' }, T0);
+  assert.equal(E.quitCost(s, T0 + 10 * MIN).debtMs, 15 * MIN);
+  E.quit(s, {}, T0 + 10 * MIN);
+  assert.equal(s.ledger.at(-1).focusMs, 10 * MIN);
+  assert.equal(s.debtMs, 15 * MIN);
+  assert.ok(E.lockoutActive(s, T0 + 11 * MIN));
+  // the debt raises the next stopwatch's minimum
+  s.lockout = null;
+  E.start(s, { profileId: 'stopwatch' }, T0 + 30 * MIN);
+  assert.equal(E.sessionView(s, T0 + 30 * MIN).remaining, 40 * MIN);
+});
+
+test('stopwatch pauses with the usual wait, and finishes on its own after the cap', () => {
+  const s = E.defaultState();
+  E.start(s, { profileId: 'stopwatch' }, T0);
+  assert.equal(E.requestPause(s, T0 + 24 * MIN)[0].type, 'pauseRequested'); // no "last two minutes" rule
+  E.tick(s, T0 + 26 * MIN);
+  assert.equal(E.sessionView(s, T0 + 26 * MIN).pause, 'paused');
+  assert.equal(E.isBlocked(s, 'youtube.com', T0 + 26 * MIN), false);
+  E.resume(s, T0 + 30 * MIN);
+  assert.equal(E.sessionView(s, T0 + 30 * MIN).elapsed, 26 * MIN);
+  const ev = E.tick(s, T0 + 12 * 60 * MIN);
+  assert.ok(ev.some((e) => e.type === 'complete'));
+  assert.equal(s.ledger.at(-1).focusMs, E.RULES.stopwatchMaxMs);
+});
+
+test('closing Togami during a stopwatch: a quit before the minimum, a finish after it', () => {
+  const s = E.defaultState();
+  E.start(s, { profileId: 'stopwatch' }, T0);
+  const ev = E.checkClosedGap(s, 1000, 1000 + 30 * MIN, T0 + 60 * MIN); // last seen 30 min in
+  assert.equal(ev[0].type, 'complete');
+  assert.equal(s.ledger.at(-1).focusMs, 30 * MIN);
+  E.start(s, { profileId: 'stopwatch' }, T0 + 2 * 60 * MIN);
+  const ev2 = E.checkClosedGap(s, 1000, 1000 + 30 * MIN, T0 + 2 * 60 * MIN + 40 * MIN); // last seen 10 min in
+  assert.equal(ev2[0].type, 'quit');
+  assert.equal(ev2[0].entry.forced, true);
+});

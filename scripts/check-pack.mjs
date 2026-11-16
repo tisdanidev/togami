@@ -17,6 +17,7 @@ const total = files.filter((f) => ok.test(f) || f === 'pet.json').reduce((n, f) 
 if (total > 64 * 1024 * 1024) errors.push(`pack is ${(total / 1048576).toFixed(1)} MB; the limit is 64 MB`);
 if (typeof pack.name !== 'string' || !pack.name.trim()) errors.push('"name" must be a non-empty string');
 const ex = pack.expressions;
+if (pack.personality != null && (typeof pack.personality !== 'string' || pack.personality.length > 800)) errors.push('"personality" must be text of at most 800 characters');
 if (!ex || typeof ex !== 'object' || !Object.keys(ex).length) errors.push('"expressions" must be an object with at least one expression');
 else {
   if (!ex[pack.idle]) errors.push(`"idle" (${JSON.stringify(pack.idle)}) is not one of the expressions`);

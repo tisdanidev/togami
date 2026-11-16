@@ -91,12 +91,6 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
     }
 }
 
-/// Quits Togami (the UI calls this after asking, if a session is running).
-#[tauri::command]
-pub fn app_exit(app: AppHandle) {
-    app.exit(0);
-}
-
 /// macOS app menu. Quit is Togami's own item so that ⌘Q asks first during a
 /// session; Edit makes copy and paste work in text fields.
 #[cfg(target_os = "macos")]

@@ -215,6 +215,7 @@ Then delete the template's `neutral-*`, `happy-*` and `annoyed-*` PNGs if the ne
 | `idle` | string | **yes** | — | Expression the pet rests in and returns to after speaking. Must be a key of `expressions`. |
 | `expressions` | object | **yes** | — | `name → { intro?, open, closed? }`, see 3.1. Expression names are free text; use lowercase words. |
 | `lines` | object | no | — | `moment → [ { "e": expression, "t": text }, … ]`, see section 5. |
+| `personality` | string | no | none | Who the character is, for Togami's Ask chat (AI help): one to three sentences, up to 800 characters, e.g. `"A proud, sharp-tongued cat who secretly wants the student to do well. Teases, but always helps."`. Write it as a description, not instructions. The chat replies in this character, and the pet says the first sentence of each reply in its speech box. |
 
 Any `timing` field you leave out keeps its default.
 

@@ -1,13 +1,14 @@
 # Togami
 
-A focus timer and distraction blocker for students. Pick a session type, say what you're working on, and Togami blocks distracting apps and sites until the session is done. Quitting early has consequences.
+A focus timer and distraction blocker for students. Pick a session type (or a stopwatch with no set length), say what you're working on, and Togami blocks distracting apps and sites until the session is done. Quitting early has consequences.
 
 ## Features
 
-- **Session types.** Pomodoro-style plans you can edit: focus length, break, long break and number of blocks. Ships with Essay (50/10 ×3), Revision (25/5 ×4) and Deep work (90/20 ×2), plus **Custom**, set with steppers right on the Focus page.
+- **Session types.** Pomodoro-style plans you can edit: focus length, break, long break and number of blocks. Ships with Essay (50/10 ×3), Revision (25/5 ×4) and Deep work (90/20 ×2), plus **Stopwatch** and **Custom**, set with steppers right on the Focus page.
+- **Stopwatch.** No set length: it counts up with blocks on and every rule in place. Finish any time after your minimum (25 min by default); ending it before then counts as quitting. It finishes by itself after 8 hours.
 - **Session screen.** A running session takes over the window: a red tint with the timer, your intention and the music player during focus, a green tint with the time left and the music player during breaks, and a neutral tint while paused. Press **F11** for full screen.
 - **Sidebar.** Notion-style navigation on the left with the status and a mini music player. Hide it with the button or Ctrl+\\.
-- **Blocking.** Apps and websites per session type, plus an always-allowed list. Windows, Settings, Task Manager and Togami are never blocked. Breaks are unblocked unless you turn on *Block during breaks*.
+- **Blocking.** One list of apps and websites, used by every session type, plus an always-allowed list. Windows, Settings, Task Manager and Togami are never blocked. Breaks are unblocked unless you turn on *Block during breaks*.
 - **Pausing.** Press Pause and blocking keeps running for 2 more minutes, then stops for up to 10 minutes. Only during focus time.
 - **Pausing just the timer.** Click the timer (or the pet's timer badge) to stop it straight away; click again to carry on. Blocking stays on the whole time, even if you stop it during a break.
 - **Quitting.** Hold a button for 5 seconds, type a sentence, wait 60 seconds, then see the cost. You can back out at every step.
@@ -16,7 +17,7 @@ A focus timer and distraction blocker for students. Pick a session type, say wha
   - **Focus debt.** Skipped focus time (up to 60 min) is added to your next session.
   - **Streak reset.**
   - **Ledger.** The quit and your reason are recorded permanently.
-  - **Locked settings.** Blocklists, session types and data are locked during sessions and lockouts.
+  - **Locked settings.** The blocklist, session types and data are locked during sessions and lockouts.
   - Closing Togami mid-session counts as quitting.
 - **Pardons.** Earned every 5 finished sessions (max 3). A pardon cancels a quit's lockout, debt and streak reset; the quit stays in the ledger.
 - **Emergency unlock.** Once a week, end the session or lockout immediately with no penalty.
@@ -102,6 +103,28 @@ npx tauri build --target universal-apple-darwin    # .app and .dmg under src-tau
 
 The app is ad-hoc signed, not notarized. On first launch, macOS asks the user to confirm it in System Settings → Privacy & Security (**Open Anyway**). Because an ad-hoc signature changes with every build, macOS may ask for Accessibility again after an update. Signing with an Apple Developer ID and notarizing would remove both. tauri-action does that when the `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD` and `APPLE_TEAM_ID` secrets are passed to it.
 
+## Android app
+
+The same app also builds for **Android 7 or later** as one APK for 64-bit and 32-bit ARM phones. It's made for the **Galaxy S25** (Android 15, One UI 7) and works on other phones. Android has one window, so the parts that are windows on a desktop live inside Togami. Native code: `src-tauri/src/android.rs`, a `droid` module in `blocker.rs`, and Kotlin in `src-tauri/gen/android/app/src/main/java/dev/tisdani/togami/`.
+
+- **Blocking** needs Togami's **Accessibility service** (Settings → Permissions in Togami opens the page; on Samsung it's under *Installed apps*). It reports which app is in front and, in a browser, the address bar, which the same `rules.rs` matches. Browsers: Chrome, Samsung Internet, Edge, Firefox, Brave, Opera, Vivaldi and DuckDuckGo. A blocked app, or a browser on a blocked site after the same 5-second grace period, is sent to the home screen and Togami opens on top with its block screen. Android doesn't let an app close another app's tab, so the tab stays open behind the block, and coming back to it within 30 seconds is blocked at once.
+- **Restricted settings:** Android 13+ greys out Accessibility and notification access for apps installed from a file. Open Togami's **App info → ⋮ → Allow restricted settings** first (Togami links to it).
+- **Never touched:** the home screen, the keyboard, the phone app, system UI, Settings, the installer and Togami.
+- **Now playing** comes from any player's media session once **notification access** is on (Togami doesn't read notifications).
+- **Pet:** sits in the corner of Togami, scaled to fit the phone. Tap to poke, press and hold for its menu.
+- **Ask chat:** opens over Togami (Back closes it). Instead of a screen snip you attach a screenshot or photo.
+- **Background:** Back on the first page and Home keep Togami running with blocking on. Swiping it away in Recents can stop the timer until it's opened again.
+- **Updates:** the release has a separate `latest-android.json`. When a newer version is listed, the same required-update screen appears, and Togami downloads the APK and installs it through Android's installer. The first time, Android asks you to allow *Install unknown apps* for Togami and to confirm the update; on Android 12 and later, updates after that install by themselves. Android only installs it over the old app if it's signed with the same key.
+
+Build locally (needs the Android SDK, NDK 27, JDK 17 and `rustup target add aarch64-linux-android armv7-linux-androideabi`):
+
+```bash
+npx tauri android build --apk --target aarch64 --target armv7
+# src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+```
+
+On Windows this needs Developer Mode, because the CLI symlinks the Rust library into `jniLibs`. Releases are signed with a key from `src-tauri/gen/android/keystore.properties` (gitignored, written by the release workflow from the `ANDROID_KEYSTORE`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` secrets). Keep that key safe: an APK signed with another key can't update existing installs.
+
 ### Togami Dev (test build)
 
 A separate app for trying things out without consequences:
@@ -124,7 +147,7 @@ Bump the version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.
 git tag v0.2.1 && git push origin v0.2.1
 ```
 
-Or run the **Release** workflow from the Actions tab: it tags `v<version>` itself. `.github/workflows/release.yml` builds on Windows and then macOS (universal), runs the tests, signs the update with the `TAURI_SIGNING_PRIVATE_KEY` repository secret and publishes the release with `latest.json`. Installed copies pick it up automatically. Keep the private key safe: without it, existing installs can't receive updates.
+Or run the **Release** workflow from the Actions tab: it tags `v<version>` itself. `.github/workflows/release.yml` builds on Windows, then macOS (universal), then Android, runs the tests, signs the update with the `TAURI_SIGNING_PRIVATE_KEY` repository secret and publishes the release with `latest.json` (plus the signed APK and `latest-android.json`). Installed copies pick it up automatically. Keep the private key safe: without it, existing installs can't receive updates.
 
 ### Known limits
 
@@ -138,7 +161,8 @@ Or run the **Release** workflow from the Actions tab: it tags `v<version>` itsel
 | --- | --- |
 | `app/js/engine.js` | All session, pause, penalty and ledger rules. Pure functions, tested in `test/engine.test.js` |
 | `app/js/platform.js` | Bridge to the native code (blocking, media, full screen); simulated in the browser |
-| `src-tauri/` | Desktop app: `blocker.rs` (foreground window watcher), `media.rs` (now playing), `system.rs` (notifications, updates, macOS permissions), `rules.rs` (matching rules, tested), `macos.rs` (macOS system calls) |
+| `src-tauri/` | The apps: `lib.rs` (start-up, shared by desktop and Android), `blocker.rs` (foreground window watcher), `media.rs` (now playing), `system.rs` (notifications, updates, permissions), `rules.rs` (matching rules, tested), `macos.rs` (macOS system calls), `android.rs` (bridge to the Kotlin plugin) |
+| `src-tauri/gen/android/` | The Android project. Togami's own Kotlin: `TogamiPlugin.kt`, `BlockService.kt` (Accessibility), `MediaListener.kt`, `MainActivity.kt` |
 | `app/js/sounds.js` | The four jingles, synthesised with Web Audio |
 | `app/fonts/` | Bundled Newsreader and IBM Plex (SIL Open Font License) |
 | `app/js/main.js` | UI |

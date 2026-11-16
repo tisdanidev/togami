@@ -1,4 +1,4 @@
-# Build Togami for Windows and macOS and publish a GitHub release, either by
+# Build Togami for Windows, macOS and Android and publish a GitHub release, either by
 # pushing a tag like v0.2.0 or with "Run workflow" on the Actions tab (the
 # release and its v<version> tag are then created from the version in
 # tauri.conf.json). The release includes latest.json and signed updates,
@@ -6,8 +6,12 @@
 #
 # The macOS job runs after the Windows one, so the two don't write latest.json
 # at the same time; it builds one universal app (Apple Silicon and Intel).
+# The Android job runs last: it adds a signed APK and latest-android.json
+# (what the Android app checks for updates) to the same release.
 #
-# Needs one repository secret: TAURI_SIGNING_PRIVATE_KEY (the updater key).
+# Needs repository secrets: TAURI_SIGNING_PRIVATE_KEY (the updater key), and
+# for Android ANDROID_KEYSTORE (the .jks, base64), ANDROID_KEY_ALIAS and
+# ANDROID_KEY_PASSWORD. Every APK must be signed with that same key.
 name: Release
 
 on:
@@ -23,6 +27,8 @@ env:
     **Windows:** download **Togami_*_x64-setup.exe** below and run it. Windows may show "Windows protected your PC" because the app isn't code-signed yet: click **More info → Run anyway**.
 
     **macOS 11 or later** (Apple Silicon and Intel): download **Togami_*_universal.dmg**, open it and drag Togami to Applications. The app isn't notarized by Apple yet, so the first time, open it, then go to **System Settings → Privacy & Security** and click **Open Anyway**. To block sites, allow Togami under **Privacy & Security → Accessibility** when it asks.
+
+    **Android 7 or later** (made for the Galaxy S25, works on other phones): download **Togami_*_android.apk** on the phone and open it; allow installing from your browser when Android asks. Then in Togami go to **Settings → Permissions** and switch on **Accessibility** (needed for blocking). If Android says it is a restricted setting, open Togami's **App info → ⋮ → Allow restricted settings** first.
 
     Installed copies update themselves from now on.
 
@@ -104,3 +110,71 @@ jobs:
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
+
+  android:
+    needs: macos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Android NDK
+        run: sdkmanager "ndk;27.2.12479018"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - run: npm ci
+
+      - name: Signing key
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE" ] || [ -z "$ANDROID_KEY_PASSWORD" ] || [ -z "$ANDROID_KEY_ALIAS" ]; then
+            echo "::error::The ANDROID_KEYSTORE, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD secrets are needed to sign the APK."
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE" | base64 -d > "$RUNNER_TEMP/togami-release.jks"
+          {
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "password=$ANDROID_KEY_PASSWORD"
+            echo "storeFile=$RUNNER_TEMP/togami-release.jks"
+          } > src-tauri/gen/android/keystore.properties
+
+      - name: Build the APK (64-bit and 32-bit ARM phones)
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+        run: npx tauri android build --apk --target aarch64 --target armv7 --ci
+
+      - name: Publish the APK and latest-android.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          APK="Togami_${VERSION}_android.apk"
+          cp src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk "$APK"
+          node -e '
+            const [version, apk] = process.argv.slice(1);
+            const out = { version, notes: `Togami ${version}`, pub_date: new Date().toISOString(),
+              url: `https://github.com/tisdanidev/togami/releases/download/v${version}/${apk}` };
+            require("fs").writeFileSync("latest-android.json", JSON.stringify(out, null, 2));
+          ' "$VERSION" "$APK"
+          gh release upload "v$VERSION" "$APK" latest-android.json --clobber

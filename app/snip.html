@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Snip</title>
+<link rel="stylesheet" href="fonts/fonts.css" />
+<style>
+  /* Windows: a full-screen window over a still of the screen. Drag out the
+     part to ask about; it goes to the Ask window. macOS uses the system's
+     own selection instead (see src-tauri/src/ai.rs). */
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; cursor: crosshair; user-select: none; -webkit-user-select: none; }
+  canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+  #dim { position: fixed; inset: 0; background: rgba(10, 12, 20, .42); }
+  #sel { position: fixed; border: 1.5px solid #fff; outline: 1px solid rgba(42, 74, 166, .9); box-shadow: 0 0 0 200vmax rgba(10, 12, 20, .42); pointer-events: none; }
+  #hint {
+    position: fixed; top: 22px; left: 50%; transform: translateX(-50%); z-index: 2; pointer-events: none;
+    font: 500 13.5px 'IBM Plex Sans', 'Segoe UI', sans-serif; color: #fbfbfa; background: rgba(21, 21, 26, .88);
+    padding: 9px 16px; border-radius: 999px; box-shadow: 0 6px 24px rgba(0, 0, 0, .3); white-space: nowrap;
+  }
+  #hint b { color: #8ba5f0; font-weight: 500; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+  <canvas id="shot"></canvas>
+  <div id="dim"></div>
+  <div id="sel" hidden></div>
+  <div id="hint">Drag over what you want explained · <b>click</b> for the whole screen · <b>Esc</b> to cancel</div>
+  <script type="module" src="js/snip.js"></script>
+</body>
+</html>

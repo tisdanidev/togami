@@ -3,7 +3,8 @@
 import * as E from './engine.js';
 import * as store from './store.js';
 import * as clock from './clock.js';
-import { blocker, media, appWindow, notify, updater, pet, background, access, isNative, isDev, OS } from './platform.js';
+import { blocker, media, appWindow, notify, updater, pet, background, access, ai, isNative, isDev, isAndroid, OS } from './platform.js';
+import { planRequest, parsePlan } from './ai.js';
 import * as sounds from './sounds.js';
 import { voice, QUIT_PHRASE } from './voice.js';
 import { clock as fmtClock, fmtMin, fmtHours, fmtDate, fmtTime, esc } from './format.js';
@@ -35,7 +36,6 @@ if (isDev) {
   $('.brand .word').insertAdjacentHTML('afterend', '<span class="dev-badge" title="Test build: no quit penalties, instant pause">DEV</span>');
 }
 let route = routeFromHash();
-let editProfileId = state.profileId;
 let intentionDraft = '';
 let overlay = null; // { type, ... }
 let lastMode = '';
@@ -44,12 +44,16 @@ let nowPlaying = null;
 let mobileSidebar = false;
 let appVersion = '';
 let updateInfo = null; // { version, notes } once a newer version is found
-let updateState = 'idle'; // idle | checking | none | installing | error
+let updateState = 'idle'; // idle | checking | none | installing | opened (Android) | error
 let updateError = '';
 let updatePreview = false; // test bench: show the update screen without a real update
 let petName = null; // name of the installed pet pack
-let accessOk = null; // macOS: may the blocker use Accessibility (null: not known yet, or not macOS)
+let accessOk = null; // macOS and Android: may the blocker use Accessibility (null: not known yet, or neither)
+let mediaOk = null; // Android: notification access, for now playing
 let petBusy = ''; // pet pack import or removal message
+let aiKey = null; // "…abcd" once a Groq key is saved ("sample" in the browser build)
+let aiBusy = ''; // key check message
+let screenOk = null; // macOS: may snips capture the screen (null: not known yet, or not macOS)
 let lastNudge = Date.now(); // when the pet last spoke up on its own
 let lastLate = 0;
 
@@ -68,7 +72,7 @@ function syncBlocker() {
   if (!b.on) return blocker.sync({ active: false, apps: [], sites: [] });
   const allowed = new Set([...E.ALWAYS_ALLOWED, ...state.allowlist].map((x) => x.toLowerCase()));
   const keep = (x) => !allowed.has(x.toLowerCase());
-  blocker.sync({ active: true, apps: b.profile.apps.filter(keep), sites: b.profile.sites.filter(keep) });
+  blocker.sync({ active: true, apps: state.blocklist.apps.filter(keep), sites: state.blocklist.sites.filter(keep) });
 }
 
 // ---------- boot ----------
@@ -101,6 +105,7 @@ function loop() {
   const ev = E.tick(state, t);
   if (ev.length) handle(ev);
   if (mode(t) !== lastMode) render();
+  syncBars();
   if (Date.now() - lastSeenWrite > 2000) {
     lastSeenWrite = Date.now();
     store.markSeen(lastSeenWrite);
@@ -171,10 +176,12 @@ function announce(events) {
   if (state.settings.sounds) sounds.play(moment);
   const sv = state.session && E.sessionView(state, now());
   const intention = state.session?.intention;
-  petSay(moment, { intention, min: sv ? Math.round(sv.remaining / 60_000) : null });
+  petSay(moment, { intention, min: sv && !sv.open ? Math.round(sv.remaining / 60_000) : null });
   if (!state.settings.notify || (document.hasFocus() && !document.hidden)) return;
   const msg = {
-    workStart: ['Focus started', `${fmtMin(sv?.remaining ?? 0)}${intention ? ` on ${intention}` : ''}. Blocks are on.`],
+    workStart: sv?.open
+      ? ['Stopwatch started', `${intention ? `Working on ${intention}. ` : ''}Blocks are on. You can finish after ${fmtMin(sv.remaining)}.`]
+      : ['Focus started', `${fmtMin(sv?.remaining ?? 0)}${intention ? ` on ${intention}` : ''}. Blocks are on.`],
     breakStart: [sv?.phase.kind === 'long' ? 'Long break' : 'Break time', `${fmtMin(sv?.remaining ?? 0)} off. Blocks are off until it ends.`],
     breakEnd: ['Break over', `Back to focus for ${fmtMin(sv?.remaining ?? 0)}. Blocks are back on.`],
     sessionEnd: ['Session complete', `${fmtMin(detail?.focusMs ?? 0)} of focus. Nicely done.`],
@@ -189,7 +196,7 @@ function mode(t) {
   if (E.lockoutActive(state, t)) return 'lockout';
   if (!state.session) return 'idle';
   const v = E.sessionView(state, t);
-  return `run:${v.phaseIndex}:${v.pause}:${v.held}`;
+  return `run:${v.phaseIndex}:${v.pause}:${v.held}:${v.canFinish}`;
 }
 
 function render() {
@@ -200,6 +207,7 @@ function render() {
   const t = now();
   lastMode = mode(t);
   view.className = 'page' + (route === 'ledger' || route === 'settings' ? ' wide' : '');
+  $('#sbAsk').hidden = !aiKey;
   if (route === 'focus') view.innerHTML = viewFocus(t);
   if (route === 'blocklist') view.innerHTML = viewBlocklist(t);
   if (route === 'ledger') view.innerHTML = viewLedger(t);
@@ -220,6 +228,7 @@ function digits(str) {
 }
 
 function profileLabel(p) {
+  if (p.stopwatch) return 'Counts up';
   return `${p.focusMin}/${p.breakMin} ×${p.cycles}`;
 }
 
@@ -234,28 +243,34 @@ function viewFocus(t) {
   const plan = E.buildPlan(p, state.debtMs);
   const total = plan.reduce((a, x) => a + x.ms, 0);
   const cost = E.quitCost({ ...state, session: { plan, phaseIndex: 0, phaseStartedAt: t, phasePausedMs: 0 } }, t);
-  const parts = [`${p.cycles} × ${p.focusMin} min`];
-  if (p.cycles > 1) parts.push(`${p.breakMin} min breaks`);
-  if (p.longBreakMin && p.cycles > 1) parts.push(`${p.longBreakMin} min long break`);
-  parts.push(`${fmtMin(total)} total`);
+  const parts = p.stopwatch ? ['Counts up, no breaks', `finish any time after ${fmtMin(total)}`] : [`${p.cycles} × ${p.focusMin} min`];
+  if (!p.stopwatch) {
+    if (p.cycles > 1) parts.push(`${p.breakMin} min breaks`);
+    if (p.longBreakMin && p.cycles > 1) parts.push(`${p.longBreakMin} min long break`);
+    parts.push(`${fmtMin(total)} total`);
+  }
   return `<section class="focus">
     <div class="seg" role="group" aria-label="Session type">
       ${state.profiles.map((x) => `<button type="button" data-act="profile" data-id="${x.id}" aria-pressed="${x.id === p.id}">${esc(x.name)}<small>${x.custom ? 'Your own' : profileLabel(x)}</small></button>`).join('')}
     </div>
-    <p class="timer idle" aria-label="First focus block">${digits(fmtClock(plan[0].ms))}</p>
+    <p class="timer idle" aria-label="${p.stopwatch ? 'Stopwatch' : 'First focus block'}">${digits(fmtClock(p.stopwatch ? 0 : plan[0].ms))}</p>
     ${p.custom ? customEditor(p) : ''}
+    ${p.stopwatch ? `<div class="custom">${stepper(p, 'minMin', 'Minimum min')}</div>` : ''}
     <div class="summary">${parts.join(' · ')}</div>
-    ${state.debtMs ? `<div class="notice neg">${fmtMin(state.debtMs)} of debt from a quit session is added to your first block.</div>` : ''}
+    ${isAndroid && accessOk === false ? `<div class="notice neg">Blocking is off: switch on Togami in Android's Accessibility settings. <a href="#settings">Set it up</a></div>` : ''}
+    ${state.debtMs ? `<div class="notice neg">${fmtMin(state.debtMs)} of debt from a quit session is added to your ${p.stopwatch ? 'minimum' : 'first block'}.</div>` : ''}
     <div class="field">
       <input class="input" id="intention" maxlength="120" autocomplete="off" placeholder="${esc(v.idlePrompt)}" aria-label="${esc(v.idlePrompt)}" />
     </div>
     <button class="btn primary big" type="button" data-act="start">${esc(v.start)}</button>
-    <p class="quiet-line">Blocks ${p.apps.length} apps and ${p.sites.length} sites. ${state.dev ? 'Dev build: quitting and pausing are instant, with no penalties.' : `Quitting locks them for ${fmtMin(cost.lockoutMs)}.`} <a href="#settings">Rules</a></p>
+    ${aiKey ? '<button class="link quiet-link" type="button" data-act="plan">Plan this session with AI</button>' : ''}
+    <p class="quiet-line">Blocks ${state.blocklist.apps.length} apps and ${state.blocklist.sites.length} sites. ${state.dev ? 'Dev build: quitting and pausing are instant, with no penalties.' : `Quitting locks them for ${fmtMin(cost.lockoutMs)}.`} <a href="#settings">Rules</a></p>
   </section>`;
 }
 
-function customEditor(p) {
-  const field = (f, label) => `<div class="stepper">
+/** A − / number / + field for the Custom or Stopwatch session type (`minMin` belongs to Stopwatch). */
+function stepper(p, f, label) {
+  return `<div class="stepper">
       <label for="cf-${f}">${label}</label>
       <div class="ctl">
         <button type="button" data-act="cstep" data-f="${f}" data-d="-1" aria-label="Less ${label.toLowerCase()}">−</button>
@@ -263,11 +278,18 @@ function customEditor(p) {
         <button type="button" data-act="cstep" data-f="${f}" data-d="1" aria-label="More ${label.toLowerCase()}">+</button>
       </div>
     </div>`;
+}
+
+function stepperProfile(f) {
+  return E.getProfile(state, f === 'minMin' ? 'stopwatch' : 'custom');
+}
+
+function customEditor(p) {
   return `<div class="custom">
-    ${field('focusMin', 'Focus min')}
-    ${field('breakMin', 'Break min')}
-    ${field('cycles', 'Blocks')}
-    ${field('longBreakMin', 'Long break')}
+    ${stepper(p, 'focusMin', 'Focus min')}
+    ${stepper(p, 'breakMin', 'Break min')}
+    ${stepper(p, 'cycles', 'Blocks')}
+    ${stepper(p, 'longBreakMin', 'Long break')}
   </div>`;
 }
 
@@ -308,15 +330,15 @@ function renderZen(t) {
   const timer = sv.pause === 'paused'
     ? '<div class="z-timer" data-live="timer"></div>'
     : `<button class="z-timer" type="button" data-act="hold" data-live="timer" title="${sv.held ? 'Start the timer again' : 'Pause the timer (blocking stays on)'}"></button>`;
-  const heldLine = sv.held ? '<div class="z-pause">Timer paused. Blocking stays on. Click the timer to carry on.</div>' : '';
+  const heldLine = sv.held ? `<div class="z-pause">Timer paused. Blocking stays on. ${isAndroid ? 'Tap' : 'Click'} the timer to carry on.</div>` : '';
   if (!isFocus) {
     zen.innerHTML = `
       <div class="z-label">${sv.held ? 'Break · timer paused' : sv.phase.kind === 'long' ? 'Long break' : 'Break'}</div>
       ${timer}
       ${heldLine}
       <div class="z-np" data-np="full"></div>
-      <div class="z-bottom"><button class="z-btn" type="button" data-act="quit">Quit session</button></div>
-      <div class="z-hint">${OS.fullscreen} full screen</div>`;
+      <div class="z-bottom">${askBtn()}<button class="z-btn" type="button" data-act="quit">Quit session</button></div>
+      ${OS.fullscreen ? `<div class="z-hint">${OS.fullscreen} full screen</div>` : ''}`;
     return;
   }
   let pause = '';
@@ -325,25 +347,37 @@ function renderZen(t) {
   } else if (sv.pause === 'paused') {
     pause = `<div class="z-pause">Blocking is off. Resumes by itself in <b data-live="pauseOut"></b><button class="z-btn strong" type="button" data-act="resume">Resume now</button></div>`;
   }
+  const name = sv.open ? 'Stopwatch' : 'Focus';
+  const where = sv.open ? (sv.canFinish ? ' · you can finish' : ' · finish in <span data-live="finishIn"></span>') : ` · ${sv.focusIndex} of ${sv.focusTotal}`;
+  // a stopwatch past its minimum ends with Finish, free; before that only Quit ends it
+  const end = sv.canFinish
+    ? '<button class="z-btn strong" type="button" data-act="finish">Finish</button>'
+    : '<button class="z-btn" type="button" data-act="quit">Quit</button>';
   zen.innerHTML = `
-    <div class="z-label">${sv.pause === 'paused' ? 'Paused' : sv.held ? 'Focus · timer paused' : 'Focus'} · ${sv.focusIndex} of ${sv.focusTotal}</div>
+    <div class="z-label">${sv.pause === 'paused' ? 'Paused' : sv.held ? `${name} · timer paused` : name}${where}</div>
     ${timer}
     ${s.intention ? `<p class="z-intent">${esc(s.intention)}</p>` : ''}
     ${heldLine}
     ${pause}
     <div class="z-np z-np-quiet" data-np="full"></div>
     <div class="z-bottom">
-      ${sv.pause === 'none' && !sv.held ? `<button class="z-btn" type="button" data-act="pause" ${sv.remaining > E.RULES.pauseWaitMs ? '' : 'disabled'}>Pause</button>` : ''}
-      <button class="z-btn" type="button" data-act="quit">Quit</button>
+      ${askBtn()}
+      ${sv.pause === 'none' && !sv.held ? `<button class="z-btn" type="button" data-act="pause" ${sv.canPause ? '' : 'disabled'}>Pause</button>` : ''}
+      ${end}
     </div>
-    <div class="z-hint">${OS.fullscreen} full screen</div>`;
+    ${OS.fullscreen ? `<div class="z-hint">${OS.fullscreen} full screen</div>` : ''}`;
+}
+
+/** The session screen's way into the Ask chat (when AI help is set up). */
+function askBtn() {
+  return aiKey ? '<button class="z-btn" type="button" data-act="aiChat" title="Ask about your work, or snip part of the screen">Ask</button>' : '';
 }
 
 // ----- blocklist -----
 
 function viewBlocklist(t) {
   const locked = E.isLocked(state, t);
-  const p = E.getProfile(state, editProfileId);
+  const { apps, sites } = state.blocklist;
   const dis = locked ? 'disabled' : '';
   const list = (items, kind) =>
     `<div class="list">
@@ -353,14 +387,11 @@ function viewBlocklist(t) {
         <button class="btn" type="submit" ${dis}>Add</button>
       </form>
     </div>`;
-  return `<div class="page-head"><div><h1>Blocklist</h1><p>What each session type blocks. Breaks are ${state.settings.blockBreaks ? 'blocked too' : 'unblocked'}.</p></div></div>
+  return `<div class="page-head"><div><h1>Blocklist</h1><p>Blocked in every session and during lockouts. Breaks are ${state.settings.blockBreaks ? 'blocked too' : 'unblocked'}.</p></div></div>
     ${locked ? `<div class="banner">Locked until the ${state.session ? 'session' : 'lockout'} ends. You can't loosen blocks mid-session.</div>` : ''}
-    <div class="seg" role="group" aria-label="Session type" style="margin-bottom:24px">
-      ${state.profiles.map((x) => `<button type="button" data-act="editProfile" data-id="${x.id}" aria-pressed="${x.id === p.id}">${esc(x.name)}<small>${x.apps.length + x.sites.length} blocked</small></button>`).join('')}
-    </div>
     <div class="cols">
-      <div><div class="col-head"><h2 class="eyebrow">Apps</h2><span class="small muted">Closed when opened</span></div>${list(p.apps, 'apps')}</div>
-      <div><div class="col-head"><h2 class="eyebrow">Websites</h2><span class="small muted">Includes subdomains</span></div>${list(p.sites, 'sites')}</div>
+      <div><div class="col-head"><h2 class="eyebrow">Apps</h2><span class="small muted">Closed when opened</span></div>${list(apps, 'apps')}</div>
+      <div><div class="col-head"><h2 class="eyebrow">Websites</h2><span class="small muted">Includes subdomains</span></div>${list(sites, 'sites')}</div>
     </div>
     <div class="section">
       <div class="col-head"><h2>Always allowed</h2><span class="small muted">Never blocked, in any session</span></div>
@@ -475,14 +506,14 @@ function viewSettings(t) {
   const v = state.settings.voice;
   const sampleVoice = voice({ settings: { voice: v } });
   const em = E.emergencyAvailable(state, t);
-  const named = state.profiles.filter((p) => !p.custom).length;
+  const named = state.profiles.filter((p) => !E.isBuiltIn(p)).length;
   return `<div class="page-head"><div><h1>Settings</h1><p>Session types, voice and appearance.</p></div></div>
     ${locked ? `<div class="banner">Session types and data are locked until the ${state.session ? 'session' : 'lockout'} ends.</div>` : ''}
     <div class="section" style="margin-top:0">
       <h2>Session types</h2>
       <div class="table-wrap ptable"><table>
         <thead><tr><th>Name</th><th>Focus (min)</th><th>Break</th><th>Long break</th><th>Blocks</th><th></th></tr></thead>
-        <tbody>${state.profiles.map((p, i) => (p.custom ? '' : `<tr>
+        <tbody>${state.profiles.map((p, i) => (E.isBuiltIn(p) ? '' : `<tr>
           <td><input class="input sm" data-pf="name" data-i="${i}" value="${esc(p.name)}" maxlength="24" aria-label="Name" ${dis} /></td>
           <td><input class="input sm n" type="number" min="5" max="180" data-pf="focusMin" data-i="${i}" value="${p.focusMin}" aria-label="Focus minutes" ${dis} /></td>
           <td><input class="input sm n" type="number" min="1" max="60" data-pf="breakMin" data-i="${i}" value="${p.breakMin}" aria-label="Break minutes" ${dis} /></td>
@@ -492,7 +523,7 @@ function viewSettings(t) {
         </tr>`)).join('')}</tbody></table></div>
       <div class="actions" style="justify-content:flex-start;margin-top:10px;align-items:center">
         <button class="btn" type="button" data-act="addProfile" ${dis}>Add session type</button>
-        <span class="muted small">Custom is set right on the Focus page.</span>
+        <span class="muted small">Stopwatch and Custom are set right on the Focus page.</span>
       </div>
     </div>
     <div class="section">
@@ -503,12 +534,17 @@ function viewSettings(t) {
       </div>
       <p class="muted small" style="margin-top:10px">Block screen preview: <i style="font-family:var(--serif);font-size:15px;color:var(--fg)">${esc(sampleVoice.blockTitle('Discord'))}</i></p>
     </div>
-    ${access.needed ? `<div class="section">
+    ${isAndroid ? androidPermissions() : ''}
+    ${access.needed && !isAndroid ? `<div class="section">
       <h2>Permissions</h2>
       <div class="toggle-row">
         <div class="lbl"><b>Accessibility</b><span>${accessOk ? 'Allowed: Togami can read tab titles and close tabs on blocked sites.' : 'Lets Togami read tab titles and close tabs on blocked sites. Blocking apps works without it.'} macOS also asks once per browser, and for Spotify and Music, whether Togami may read them.</span></div>
         ${accessOk ? '<span class="muted small">Allowed</span>' : '<button class="btn" type="button" data-act="accessAsk">Allow</button>'}
       </div>
+      ${ai.screen.needed ? `<div class="toggle-row">
+        <div class="lbl"><b>Screen Recording</b><span>${screenOk ? 'Allowed: AI help can see the part of the screen you snip.' : 'Lets AI help see the part of the screen you snip.'} Nothing is captured unless you ask.</span></div>
+        ${screenOk ? '<span class="muted small">Allowed</span>' : '<button class="btn" type="button" data-act="screenAsk">Allow</button>'}
+      </div>` : ''}
     </div>` : ''}
     <div class="section">
       <h2>Sounds and notifications</h2>
@@ -525,11 +561,11 @@ function viewSettings(t) {
       </div>
     </div>
     <div class="section">
-      <h2>Desktop pet</h2>
+      <h2>${isAndroid ? 'Pet' : 'Desktop pet'}</h2>
       ${petName ? `<div class="toggle-row">
-        <div class="lbl"><b>Show ${esc(petName)}</b><span>Sits on your desktop and reacts to your sessions. Drag to move, right-click for options.</span></div>
+        <div class="lbl"><b>Show ${esc(petName)}</b><span>${isAndroid ? 'Sits in the corner of Togami and reacts to your sessions. Tap to poke, press and hold for options.' : 'Sits on your desktop and reacts to your sessions. Drag to move, right-click for options.'}</span></div>
         <label class="switch"><input type="checkbox" id="setPet" ${state.settings.pet ? 'checked' : ''} aria-label="Show the desktop pet" /><i></i></label>
-      </div>` : `<p class="muted small" style="margin-top:0">${pet.canImport ? 'Import a pet pack (a .zip with pet.json, its style and its frames) to get a character on your desktop that reacts to your sessions.' : 'Browser build: put an unzipped pet pack in the packs/current folder and reload.'}</p>`}
+      </div>` : `<p class="muted small" style="margin-top:0">${pet.canImport ? `Import a pet pack (a .zip with pet.json, its style and its frames) to get a character ${isAndroid ? 'in Togami' : 'on your desktop'} that reacts to your sessions.` : 'Browser build: put an unzipped pet pack in the packs/current folder and reload.'}</p>`}
       ${pet.canImport ? `<div class="pet-row">
         <button class="btn" type="button" data-act="petImport">${petName ? 'Replace pet pack' : 'Import pet pack'}</button>
         ${petName ? '<button class="btn quiet" type="button" data-act="petRemove">Remove pet</button>' : ''}
@@ -537,11 +573,12 @@ function viewSettings(t) {
         <input type="file" id="petFile" accept=".zip,application/zip" hidden />
       </div>` : ''}
     </div>
+    ${viewAiSettings()}
     ${updater.available ? `<div class="section">
       <h2>Updates</h2>
       <div class="toggle-row">
         <div class="lbl"><b>Togami ${esc(appVersion)}</b><span id="updText">${esc(updateText())}</span></div>
-        ${updateInfo ? `<button class="btn primary" type="button" data-act="updInstall" ${E.isLocked(state, t) ? 'disabled title="Finish the session or lockout first"' : ''}>Restart and update</button>` : `<button class="btn" type="button" data-act="updCheck">Check now</button>`}
+        ${updateInfo ? `<button class="btn primary" type="button" data-act="updInstall" ${E.isLocked(state, t) ? 'disabled title="Finish the session or lockout first"' : ''}>${updater.apk ? esc(updateButton(updateState === 'installing')) : 'Restart and update'}</button>` : `<button class="btn" type="button" data-act="updCheck">Check now</button>`}
       </div>
     </div>` : ''}
     <div class="section">
@@ -553,12 +590,13 @@ function viewSettings(t) {
     <div class="section">
       <h2>Rules</h2>
       <div class="terms" style="width:100%;border:0;padding:0">
+        <div class="row"><span class="k">Stopwatch</span><span>No set length: it counts up with blocks on. Finish any time after your minimum. Ending it before then is a quit. It finishes by itself after 8 h.</span></div>
         <div class="row"><span class="k">Pause</span><span>Blocking keeps running for 2 min after you press Pause. A pause ends by itself after 10 min.</span></div>
         <div class="row"><span class="k">Quit</span><span>Hold for 5 seconds, type a sentence, then wait 60 seconds. You can back out at any step.</span></div>
         <div class="row"><span class="k">Lockout</span><span>Blocks stay on after a quit: 10 min for the first quit in a week, 25 for the second, 45 after that.</span></div>
         <div class="row"><span class="k">Debt</span><span>Focus time you skip is added to your next session, up to 60 min.</span></div>
         <div class="row"><span class="k">Pardons</span><span>One for every 5 finished sessions, up to 3. A pardon cancels a quit's lockout and debt. The quit stays in the ledger.</span></div>
-        <div class="row"><span class="k">Closing</span><span>Closing the window keeps Togami running in the ${OS.tray}. Quitting it from the ${OS.tray} during a session counts as quitting.</span></div>
+        <div class="row"><span class="k">Closing</span><span>${isAndroid ? 'Back or Home keeps Togami running in the background, with blocking on. Swiping it away in Recents may stop the timer until you open it again.' : `Closing the window keeps Togami running in the ${OS.tray}. Quitting it from the ${OS.tray} during a session counts as quitting.`}</span></div>
         <div class="row"><span class="k">Emergency</span><span>Once a week, end everything now with no penalty. ${em ? '<b>Available.</b>' : '<b>Used this week</b>, back on Monday.'}</span></div>
       </div>
     </div>
@@ -570,6 +608,38 @@ function viewSettings(t) {
       </div>
       <p class="muted small">Everything is saved on this computer only.</p>
     </div>`;
+}
+
+function viewAiSettings() {
+  const who = petName || 'Togami';
+  if (!ai.real) {
+    return `<div class="section">
+      <h2>AI help</h2>
+      <p class="muted small" style="margin-top:0">Browser build: the chat and the planner answer with samples, so no key is needed. Screen snips need the desktop app.</p>
+      <div class="pet-row"><button class="btn" type="button" data-act="aiChat">Open the chat</button></div>
+    </div>`;
+  }
+  if (aiKey) {
+    return `<div class="section">
+      <h2>AI help</h2>
+      <div class="toggle-row" style="border-top:0;padding-top:0">
+        <div class="lbl"><b>Groq key ${esc(aiKey)}</b><span>Ask ${esc(who)} about your work, have part of your screen explained, and plan sessions. What you send, snips included, goes to Groq.</span></div>
+        <div class="pet-row" style="margin:0;flex-wrap:nowrap">
+          <button class="btn" type="button" data-act="aiChat">Open the chat</button>
+          <button class="btn quiet" type="button" data-act="aiKeyClear">Remove key</button>
+        </div>
+      </div>
+    </div>`;
+  }
+  return `<div class="section">
+    <h2>AI help</h2>
+    <p class="muted small" style="margin-top:0">Chat with ${esc(who)}, snip part of your screen to have it explained, and let AI plan your sessions. It runs on Groq: make a free account at <b>console.groq.com</b>, create an API key under <b>API Keys</b> and paste it here. The key stays on this computer. What you send, snips included, goes to Groq.</p>
+    <form class="pet-row" data-aikey>
+      <input class="input sm" id="aiKeyInput" type="password" placeholder="gsk_…" autocomplete="off" spellcheck="false" aria-label="Groq API key" style="width:min(320px,100%)" />
+      <button class="btn" type="submit" ${aiBusy === 'Checking…' ? 'disabled' : ''}>Save key</button>
+      <span class="muted small" id="aiMsg">${esc(aiBusy)}</span>
+    </form>
+  </div>`;
 }
 
 // ---------- live updates (every 250 ms, no re-render) ----------
@@ -598,7 +668,8 @@ function updateLive(t) {
     txt = `Locked ${fmtClock(state.lockout.until - t)}`;
   } else if (state.session) {
     const sv = E.sessionView(state, t);
-    txt = `${sv.phase.kind === 'focus' ? 'Focus' : 'Break'} ${fmtClock(sv.remaining)}${sv.held ? ' (paused)' : ''}`;
+    const name = sv.open ? 'Stopwatch' : sv.phase.kind === 'focus' ? 'Focus' : 'Break';
+    txt = `${name} ${fmtClock(sv.open ? Math.floor(sv.elapsed / 1000) * 1000 : sv.remaining)}${sv.held ? ' (paused)' : ''}`;
   }
   const html = `<span class="dot"></span><span>${txt}</span>`;
   if (st.innerHTML !== html) st.innerHTML = html;
@@ -607,7 +678,8 @@ function updateLive(t) {
 
   if (state.session) {
     const sv = E.sessionView(state, t);
-    setDigits('timer', fmtClock(sv.remaining));
+    setDigits('timer', fmtClock(sv.open ? Math.floor(sv.elapsed / 1000) * 1000 : sv.remaining));
+    setText('finishIn', fmtClock(sv.remaining));
     setText('pauseIn', fmtClock(sv.pauseStartsIn));
     setText('pauseOut', fmtClock(sv.pauseEndsIn));
   }
@@ -621,7 +693,10 @@ function updateLive(t) {
 
 function blockLeft(t) {
   if (E.lockoutActive(state, t)) return state.lockout.until - t;
-  if (state.session) return E.sessionView(state, t).remaining;
+  if (state.session) {
+    const sv = E.sessionView(state, t);
+    return sv.canFinish ? null : sv.remaining;
+  }
   return null;
 }
 
@@ -634,8 +709,10 @@ function renderOverlay() {
     return;
   }
   overlayEl.hidden = false;
-  const fn = { block: ovBlock, quit: ovQuit, complete: ovComplete, emergency: ovEmergency, reset: ovReset, exit: ovExit }[overlay.type];
+  const fn = { block: ovBlock, quit: ovQuit, complete: ovComplete, emergency: ovEmergency, reset: ovReset, exit: ovExit, plan: ovPlan }[overlay.type];
   overlayEl.innerHTML = fn();
+  const planText = $('#planText');
+  if (planText) planText.value = overlay.text ?? '';
   const focusEl = overlayEl.querySelector('[autofocus]') || overlayEl.querySelector('button');
   focusEl?.focus({ preventScroll: true });
   if (overlay.type === 'quit' && overlay.step === 1) bindHold();
@@ -650,9 +727,11 @@ function ovBlock() {
   const t = now();
   const lock = E.lockoutActive(state, t);
   const sv = state.session && E.sessionView(state, t);
-  const body = lock ? v.blockLockout(fmtMin(state.lockout.until - t)) : v.blockBody(fmtMin(sv.remaining), state.session.intention);
+  const body = lock ? v.blockLockout(fmtMin(state.lockout.until - t))
+    : sv.open ? v.blockOpen(sv.canFinish ? null : fmtMin(sv.remaining), state.session.intention)
+    : v.blockBody(fmtMin(sv.remaining), state.session.intention);
   const count = state.attempts.filter((a) => !a.sample && a.target === overlay.target && a.at >= new Date(t).setHours(0, 0, 0, 0)).length;
-  const canPause = sv && sv.phase.kind === 'focus' && sv.pause === 'none' && sv.remaining > E.RULES.pauseWaitMs;
+  const canPause = sv && sv.canPause;
   return `<div class="blockscreen" role="alertdialog" aria-labelledby="bt">
     ${markSvg()}
     <h2 id="bt">${esc(v.blockTitle(overlay.target))}</h2>
@@ -749,12 +828,144 @@ function ovEmergency() {
 function ovReset() {
   return `<div class="modal" role="dialog" aria-labelledby="rt">
     <h2 id="rt">Reset everything?</h2>
-    <p>This deletes your session types, blocklists, ledger, streak and pardons from this computer. It can't be undone.</p>
+    <p>This deletes your session types, blocklist, ledger, streak and pardons from this computer. It can't be undone.</p>
     <div class="actions">
       <button class="btn danger solid" type="button" data-act="resetConfirm">Delete everything</button>
       <button class="btn primary" type="button" data-act="close" autofocus>Cancel</button>
     </div></div>`;
 }
+
+/** The session planner: say what needs doing, get a Custom session and blocks to add. */
+function ovPlan() {
+  const o = overlay;
+  if (o.step === 'result') {
+    const p = o.plan;
+    const total = p.cycles * p.focusMin + (p.cycles - 1) * p.breakMin + (p.cycles > 1 ? p.longBreakMin : 0);
+    const parts = [`${p.cycles} × ${p.focusMin} min`];
+    if (p.cycles > 1) parts.push(`${p.breakMin} min breaks`);
+    if (p.longBreakMin && p.cycles > 1) parts.push(`${p.longBreakMin} min long break`);
+    parts.push(`${fmtMin(total * 60_000)} total`);
+    const adds = planAdds(p);
+    return `<div class="modal" role="dialog" aria-labelledby="plt">
+      <h2 id="plt">${esc(p.intention || 'Your session')}</h2>
+      <p class="plan-sum">${parts.join(' · ')}</p>
+      ${p.why ? `<p>${esc(p.why)}</p>` : ''}
+      ${adds.length ? `<div class="plan-adds"><span class="small muted">Also block</span>
+        ${adds.map(([k, x], i) => `<label class="plan-add"><input type="checkbox" data-plan-add="${i}" ${o.skip.includes(i) ? '' : 'checked'} /> ${esc(x)}<small>${k === 'sites' ? 'site' : 'app'}</small></label>`).join('')}
+      </div>` : ''}
+      <p class="small">It goes into the Custom session type. You can still change it before you start.</p>
+      <div class="actions">
+        <button class="btn primary" type="button" data-act="planUse" autofocus>Use this plan</button>
+        <button class="btn" type="button" data-act="planBack">Change</button>
+        <button class="btn quiet" type="button" data-act="close">Cancel</button>
+      </div></div>`;
+  }
+  const busy = o.step === 'busy';
+  return `<div class="modal" role="dialog" aria-labelledby="plt">
+    <h2 id="plt">Plan a session</h2>
+    <p>Say what you need to get done and how long you have. AI suggests the session and what else to block.</p>
+    <textarea class="input area" id="planText" maxlength="1000" placeholder="e.g. Finish my history essay intro and first paragraph. I have about 2 hours." aria-label="What you need to do" ${busy ? 'disabled' : 'autofocus'}></textarea>
+    ${o.error ? `<div class="notice neg" style="width:auto">${esc(o.error)}</div>` : ''}
+    <div class="actions">
+      <button class="btn primary" type="button" data-act="planGo" ${busy ? 'disabled' : ''}>${busy ? 'Planning…' : 'Plan it'}</button>
+      <button class="btn quiet" type="button" data-act="close">Cancel</button>
+    </div></div>`;
+}
+
+/** The blocks a plan suggests adding, as [list, name]. */
+function planAdds(p) {
+  return [...p.blockSites.map((x) => ['sites', x]), ...p.blockApps.map((x) => ['apps', x])];
+}
+
+function planGo() {
+  const o = overlay;
+  if (o?.type !== 'plan' || o.step === 'busy') return;
+  const text = (o.text ?? '').trim();
+  if (!text) return $('#planText')?.focus();
+  o.step = 'busy';
+  o.error = '';
+  renderOverlay();
+  ai.complete(planRequest(text, { blocklist: state.blocklist, allowlist: state.allowlist, date: new Date() }))
+    .then((raw) => {
+      o.plan = parsePlan(raw, { blocklist: state.blocklist, allowlist: state.allowlist });
+      o.skip = [];
+      o.step = 'result';
+    })
+    .catch((err) => {
+      o.step = 'ask';
+      o.error = String(err?.message ?? err);
+    })
+    .finally(() => {
+      if (overlay === o) renderOverlay();
+    });
+}
+
+/** Puts the plan into the Custom session type and adds the ticked blocks. */
+function planUse() {
+  const p = overlay.plan;
+  if (E.isLocked(state, now())) return toast('Finish the session or lockout first.', 'neg');
+  const c = E.getProfile(state, 'custom');
+  for (const f of ['focusMin', 'breakMin', 'cycles', 'longBreakMin']) c[f] = E.clampField(f, p[f], c[f]);
+  state.profileId = c.id;
+  if (p.intention) intentionDraft = p.intention;
+  const added = [];
+  planAdds(p).forEach(([k, x], i) => {
+    if (overlay.skip.includes(i) || state.blocklist[k].some((y) => y.toLowerCase() === x.toLowerCase())) return;
+    state.blocklist[k].push(x);
+    added.push(x);
+  });
+  overlay = null;
+  if (route !== 'focus') location.hash = '#focus';
+  commit();
+  render();
+  toast(added.length ? `Plan set, and ${added.join(', ')} added to the blocklist. Start when you're ready.` : "Plan set. Start when you're ready.");
+}
+
+// ---------- AI help ----------
+
+ai.keyStatus().then((k) => {
+  aiKey = k;
+  render();
+});
+
+function openChat() {
+  ai.openChat().catch((err) => toast(String(err), 'neg'));
+}
+
+/** Snip part of the screen; it turns up in the Ask chat. */
+function startSnip() {
+  ai.snip().catch((err) => {
+    const msg = String(err?.message ?? err);
+    toast(msg, 'neg');
+    if (document.hidden || !document.hasFocus()) notify('Snip', msg);
+    if (/Screen Recording/.test(msg)) refreshScreen();
+  });
+}
+
+async function saveAiKey(key) {
+  aiBusy = 'Checking…';
+  render();
+  try {
+    aiKey = await ai.setKey(key);
+    aiBusy = '';
+    toast('Key saved. AI help is on.');
+  } catch (err) {
+    aiBusy = String(err?.message ?? err);
+  }
+  render();
+}
+
+// macOS: checked on start and whenever Togami comes back to the front (e.g. from System Settings)
+function refreshScreen() {
+  if (!ai.screen.needed) return;
+  ai.screen.granted().then((ok) => {
+    if (ok === screenOk) return;
+    screenOk = ok;
+    if (route === 'settings') render();
+  });
+}
+refreshScreen();
+window.addEventListener('focus', refreshScreen);
 
 // ---------- now playing ----------
 
@@ -859,6 +1070,39 @@ document.addEventListener('click', (ev) => {
     case 'accessAsk':
       access.request();
       break;
+    case 'mediaAsk':
+      access.media.request();
+      break;
+    case 'appInfo':
+      access.appInfo();
+      break;
+    case 'screenAsk':
+      ai.screen.request();
+      break;
+    case 'aiChat':
+      openChat();
+      break;
+    case 'aiKeyClear':
+      ai.clearKey().then(() => {
+        aiKey = null;
+        render();
+        toast('Key removed. AI help is off.');
+      }, (err) => toast(String(err), 'neg'));
+      break;
+    case 'plan':
+      overlay = { type: 'plan', step: 'ask', text: '', skip: [] };
+      renderOverlay();
+      break;
+    case 'planGo':
+      planGo();
+      break;
+    case 'planBack':
+      overlay.step = 'ask';
+      renderOverlay();
+      break;
+    case 'planUse':
+      planUse();
+      break;
     case 'updInstall':
       if (updatePreview) {
         updatePreview = false;
@@ -868,6 +1112,10 @@ document.addEventListener('click', (ev) => {
         break;
       }
       if (E.isLocked(state, t)) return;
+      if (updater.apk) {
+        startApkUpdate();
+        break;
+      }
       updateState = 'installing';
       render();
       updater.install().catch((err) => {
@@ -886,14 +1134,13 @@ document.addEventListener('click', (ev) => {
       break;
     case 'profile':
       state.profileId = btn.dataset.id;
-      editProfileId = btn.dataset.id;
       commit();
       render();
       break;
     case 'cstep': {
-      const p = E.getProfile(state, 'custom');
       const f = btn.dataset.f;
-      const step = f === 'focusMin' ? 5 : 1;
+      const p = stepperProfile(f);
+      const step = f === 'focusMin' || f === 'minMin' ? 5 : 1;
       p[f] = E.clampField(f, p[f] + Number(btn.dataset.d) * step, p[f]);
       commit();
       render();
@@ -913,6 +1160,9 @@ document.addEventListener('click', (ev) => {
     case 'blockPause':
       overlay = null;
       handle(E.requestPause(state, t));
+      break;
+    case 'finish':
+      handle(E.finishOpen(state, t));
       break;
     case 'cancelPause':
       handle(E.cancelPause(state));
@@ -993,15 +1243,11 @@ document.addEventListener('click', (ev) => {
     case 'mNext':
       media.next();
       break;
-    case 'editProfile':
-      editProfileId = btn.dataset.id;
-      render();
-      break;
     case 'rm': {
       if (E.isLocked(state, t)) return;
       const i = Number(btn.dataset.i);
       if (btn.dataset.kind === 'allow') state.allowlist.splice(i, 1);
-      else E.getProfile(state, editProfileId)[btn.dataset.kind].splice(i, 1);
+      else state.blocklist[btn.dataset.kind].splice(i, 1);
       commit();
       render();
       break;
@@ -1020,7 +1266,7 @@ document.addEventListener('click', (ev) => {
     case 'addProfile': {
       if (E.isLocked(state, t)) return;
       const id = 'p' + Date.now().toString(36);
-      state.profiles.splice(state.profiles.length - 1, 0, { id, name: 'New session', focusMin: 30, breakMin: 5, longBreakMin: 15, cycles: 3, apps: ['Discord'], sites: ['youtube.com'] });
+      state.profiles.splice(state.profiles.findIndex(E.isBuiltIn), 0, { id, name: 'New session', focusMin: 30, breakMin: 5, longBreakMin: 15, cycles: 3 });
       commit();
       render();
       break;
@@ -1028,10 +1274,9 @@ document.addEventListener('click', (ev) => {
     case 'rmProfile': {
       if (E.isLocked(state, t)) return;
       const i = Number(btn.dataset.i);
-      if (state.profiles[i]?.custom || state.profiles.filter((p) => !p.custom).length < 2) return;
+      if (!state.profiles[i] || E.isBuiltIn(state.profiles[i]) || state.profiles.filter((p) => !E.isBuiltIn(p)).length < 2) return;
       const [gone] = state.profiles.splice(i, 1);
       if (state.profileId === gone.id) state.profileId = state.profiles[0].id;
-      if (editProfileId === gone.id) editProfileId = state.profileId;
       commit();
       render();
       break;
@@ -1050,7 +1295,6 @@ document.addEventListener('click', (ev) => {
       store.wipe();
       clock.reset();
       state = E.defaultState();
-      editProfileId = state.profileId;
       overlay = null;
       applyTheme();
       applySidebar();
@@ -1088,6 +1332,7 @@ document.addEventListener('click', (ev) => {
 document.addEventListener('input', (ev) => {
   const el = ev.target;
   if (el.id === 'intention') intentionDraft = el.value;
+  if (el.id === 'planText' && overlay?.type === 'plan') overlay.text = el.value;
   if (el.id === 'phrase') {
     const norm = (s) => s.toLowerCase().replace(/[’‘`]/g, "'").replace(/\s+/g, ' ').trim();
     $('#phraseNext').disabled = norm(el.value) !== norm(QUIT_PHRASE);
@@ -1114,6 +1359,10 @@ document.addEventListener('keydown', (ev) => {
     $('[data-act="start"]')?.click();
   }
   if (ev.key === 'Enter' && ev.target.id === 'phrase' && !$('#phraseNext').disabled) $('#phraseNext').click();
+  if (ev.key === 'Enter' && ev.target.id === 'planText' && !ev.shiftKey) {
+    ev.preventDefault();
+    planGo();
+  }
   if (ev.key === 'Escape' && overlay && overlay.type !== 'complete') {
     overlay = null;
     renderOverlay();
@@ -1126,6 +1375,12 @@ document.addEventListener('paste', (ev) => {
 });
 
 document.addEventListener('submit', (ev) => {
+  if (ev.target.closest('[data-aikey]')) {
+    ev.preventDefault();
+    const key = $('#aiKeyInput')?.value.trim();
+    if (key) saveAiKey(key);
+    return;
+  }
   const form = ev.target.closest('[data-form]');
   if (!form) return;
   ev.preventDefault();
@@ -1137,7 +1392,7 @@ document.addEventListener('submit', (ev) => {
   if (kind === 'sites' || (kind === 'allow' && /\./.test(val) && !/\s/.test(val))) {
     val = val.toLowerCase().replace(/^[a-z]+:\/\//, '').replace(/^www\./, '').split(/[/?#]/)[0];
   }
-  const list = kind === 'allow' ? state.allowlist : E.getProfile(state, editProfileId)[kind];
+  const list = kind === 'allow' ? state.allowlist : state.blocklist[kind];
   if (list.some((x) => x.toLowerCase() === val.toLowerCase())) {
     toast(`${val} is already on the list.`);
   } else {
@@ -1162,6 +1417,11 @@ document.addEventListener('change', (ev) => {
     else pet.hide();
     return;
   }
+  if (el.dataset.planAdd != null && overlay?.type === 'plan') {
+    const i = Number(el.dataset.planAdd);
+    overlay.skip = el.checked ? overlay.skip.filter((x) => x !== i) : [...overlay.skip, i];
+    return;
+  }
   if (el.id === 'petFile') {
     const file = el.files?.[0];
     if (file) importPet(file);
@@ -1174,8 +1434,8 @@ document.addEventListener('change', (ev) => {
     render();
   }
   if (el.dataset.cf) {
-    const p = E.getProfile(state, 'custom');
-    p[el.dataset.cf] = E.clampField(el.dataset.cf, el.value, p[el.dataset.cf]);
+    const p = stepperProfile(el.dataset.cf);
+    p[el.dataset.cf] =E.clampField(el.dataset.cf, el.value, p[el.dataset.cf]);
     commit();
     render();
   }
@@ -1229,9 +1489,83 @@ function bindHold() {
 
 // ---------- updates (desktop app) ----------
 
+// ---------- the Android auto-updater ----------
+// Togami downloads the APK itself and hands it to Android's installer
+// (Updater.kt). It starts on its own once the update screen is up, as long
+// as Android lets Togami install apps; the first time, a tap opens that
+// setting, and the update carries on when Togami is back in front.
+let apkProgress = null; // the last update_progress answer
+let apkTimer = 0;
+let apkAuto = false; // tried once on its own already
+
+async function startApkUpdate() {
+  if (updateState === 'installing') return;
+  updateState = 'installing';
+  apkProgress = { phase: 'downloading', done: 0, total: 0 };
+  render();
+  renderForceUpdate();
+  try {
+    const started = await updater.install();
+    if (!started) {
+      updateState = 'permission';
+      apkProgress = null;
+    } else pollApk();
+  } catch (err) {
+    updateState = 'error';
+    updateError = String(err);
+  }
+  render();
+  renderForceUpdate();
+}
+
+function pollApk() {
+  clearInterval(apkTimer);
+  apkTimer = setInterval(async () => {
+    let p;
+    try {
+      p = await updater.progress();
+    } catch {
+      return;
+    }
+    if (!p) return;
+    apkProgress = p;
+    if (p.phase === 'error') {
+      clearInterval(apkTimer);
+      updateState = 'error';
+      updateError = p.error || 'Android couldn\'t install the update.';
+    }
+    renderUpdateProgress();
+  }, 400);
+}
+
+/** Only the texts change while downloading, so the page isn't rebuilt 2.5 times a second. */
+function renderUpdateProgress() {
+  renderForceUpdate();
+  const el = $('#updText');
+  if (el) el.textContent = updateText();
+  if (updateState === 'error' && route === 'settings') render();
+}
+
+function apkStage() {
+  const p = apkProgress;
+  if (!p || p.phase === 'downloading') {
+    const pct = p?.total ? ` ${Math.min(100, Math.floor((p.done / p.total) * 100))}%` : '';
+    return `Downloading the update…${pct}`;
+  }
+  if (p.phase === 'confirm') return 'Tap Update in Android\'s dialog.';
+  return 'Installing… Togami closes and reopens.';
+}
+
+// back from Android's "Install unknown apps" page: carry on if it's allowed now
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || !updater.apk || updateState !== 'permission') return;
+  updater.progress().then((p) => p?.allowed && startApkUpdate()).catch(() => {});
+});
+
 function updateText() {
-  if (updateState === 'installing') return 'Downloading the update. Togami restarts when it is installed.';
+  if (updateState === 'installing') return updater.apk ? apkStage() : 'Downloading the update. Togami restarts when it is installed.';
   if (updateState === 'error') return `Update failed: ${updateError}`;
+  if (updateState === 'permission') return 'Allow Togami to install apps (Install unknown apps), then come back.';
   if (updateInfo) return `Version ${updateInfo.version} is ready to install.`;
   if (updateState === 'checking') return 'Checking for updates…';
   if (updateState === 'none') return 'You have the latest version.';
@@ -1266,13 +1600,23 @@ function renderForceUpdate() {
     return;
   }
   const busy = updateState === 'installing';
+  // Android: start on its own the first time, if Android already lets Togami install apps
+  if (updater.apk && !apkAuto && !updatePreview && (updateState === 'idle' || updateState === 'none')) {
+    apkAuto = true;
+    updater.progress().then((p) => p?.allowed && startApkUpdate()).catch(() => {});
+  }
+  const note = !updater.apk
+    ? 'Takes a few seconds. Your history and settings are kept.'
+    : updateState === 'permission'
+      ? 'Android asks once: switch on <b>Allow from this source</b> for Togami, then come back. The update carries on by itself.'
+      : 'Togami downloads the update and Android installs it. Your history and settings are kept.';
   const html = `<div class="fu-card">
       ${markSvg()}
       <h2 id="fuTitle">Update required</h2>
       <p>${esc(APP_NAME)} ${esc(updateInfo.version)} is ready. Install it to keep using ${esc(APP_NAME)}.</p>
       ${updateState === 'error' ? `<p class="fu-err">Update failed: ${esc(updateError)}</p>` : ''}
-      <button class="btn primary solid" type="button" data-act="updInstall" ${busy ? 'disabled' : ''}>${busy ? 'Downloading… Togami restarts by itself' : updateState === 'error' ? 'Try again' : 'Install and restart'}</button>
-      <p class="muted small">Takes a few seconds. Your history and settings are kept.</p>
+      <button class="btn primary solid" type="button" data-act="updInstall" ${busy ? 'disabled' : ''}>${esc(updateButton(busy))}</button>
+      <p class="muted small">${note}</p>
     </div>`;
   if (el.dataset.html !== html) {
     el.dataset.html = html;
@@ -1282,6 +1626,11 @@ function renderForceUpdate() {
     el.hidden = false;
     el.querySelector('button')?.focus({ preventScroll: true });
   }
+}
+
+function updateButton(busy) {
+  if (updater.apk) return busy ? apkStage() : updateState === 'permission' ? 'Open the setting again' : updateState === 'error' ? 'Try again' : 'Install update';
+  return busy ? 'Downloading… Togami restarts by itself' : updateState === 'error' ? 'Try again' : 'Install and restart';
 }
 
 /** Small "update ready" line in the sidebar. Hidden while a session or lockout runs. */
@@ -1302,7 +1651,7 @@ if (updater.available) {
   setInterval(checkForUpdate, 6 * 60 * 60 * 1000);
 }
 
-// ---------- Accessibility (macOS app) ----------
+// ---------- Accessibility (macOS and Android apps) ----------
 
 // checked on start and whenever Togami comes back to the front (e.g. from System Settings)
 function refreshAccess() {
@@ -1310,11 +1659,52 @@ function refreshAccess() {
   access.granted().then((ok) => {
     if (ok === accessOk) return;
     accessOk = ok;
-    if (route === 'settings') render();
+    if (route === 'settings' || route === 'focus') render();
   });
+  if (access.media.needed) {
+    access.media.granted().then((ok) => {
+      if (ok === mediaOk) return;
+      mediaOk = ok;
+      if (route === 'settings') render();
+    });
+  }
 }
 refreshAccess();
 window.addEventListener('focus', refreshAccess);
+document.addEventListener('visibilitychange', () => document.hidden || refreshAccess());
+
+/** Android: the status and navigation bars take the colour at the page's edge
+ *  (the session screen's red or green, or the page). */
+let lastBars = '';
+function syncBars() {
+  if (!isAndroid) return;
+  const zen = $('#zen');
+  const raw = (zen && !zen.hidden ? getComputedStyle(zen).getPropertyValue('--zdeep') : getComputedStyle(document.body).backgroundColor).trim();
+  let rgb = null;
+  const hex = raw.match(/^#([0-9a-f]{6})$/i);
+  if (hex) rgb = [0, 2, 4].map((i) => parseInt(hex[1].slice(i, i + 2), 16));
+  else rgb = raw.match(/\d+(\.\d+)?/g)?.slice(0, 3).map(Number) ?? null;
+  if (!rgb || rgb.length < 3) return;
+  const color = '#' + rgb.map((x) => Math.round(x).toString(16).padStart(2, '0')).join('');
+  if (color === lastBars) return;
+  lastBars = color;
+  appWindow.bars(color, 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2] < 128);
+}
+
+/** Android: the two settings Togami needs, and where to find them. */
+function androidPermissions() {
+  const row = (ok, name, text, act) => `<div class="toggle-row">
+        <div class="lbl"><b>${name}</b><span>${text}</span></div>
+        ${ok ? '<span class="muted small">On</span>' : `<button class="btn" type="button" data-act="${act}">Turn on</button>`}
+      </div>`;
+  return `<div class="section">
+      <h2>Permissions</h2>
+      ${row(accessOk, 'Accessibility', accessOk ? 'On: Togami sees which app is in front and, in a browser, the address, during sessions and lockouts. Nothing is saved or sent.' : 'Needed for blocking. In Accessibility, open Installed apps (or Downloaded apps), then Togami blocking, and switch it on.', 'accessAsk')}
+      ${row(mediaOk, 'Notification access', mediaOk ? 'On: Togami shows what is playing and its controls.' : 'For now playing: lets Togami see what music or video is playing. Togami doesn\'t read your notifications.', 'mediaAsk')}
+      <p class="muted small">If Android says a setting is restricted (it does for apps installed from a file): open Togami's App info, tap ⋮ at the top, then <b>Allow restricted settings</b>, and try again.</p>
+      <div class="actions" style="justify-content:flex-start"><button class="btn quiet" type="button" data-act="appInfo">Open App info</button></div>
+    </div>`;
+}
 
 // ---------- background (desktop app) ----------
 
@@ -1335,8 +1725,12 @@ background.onTray((act) => {
     if (route === 'settings') render();
   }
   if (act === 'quit') {
-    // closing mid-session counts as quitting, so ask first
-    if (state.session && !state.dev) {
+    // closing mid-session counts as quitting, so ask first; a stopwatch past its minimum just finishes
+    if (state.session && E.sessionView(state, now()).canFinish) {
+      E.finishOpen(state, now());
+      store.save(state);
+      background.exit();
+    } else if (state.session && !state.dev) {
       background.show();
       overlay = { type: 'exit' };
       renderOverlay();
@@ -1380,7 +1774,7 @@ async function importPet(file) {
     state.settings.pet = true;
     commit();
     showPet();
-    toast(`${petName} is on your desktop.`);
+    toast(isAndroid ? `${petName} is here.` : `${petName} is on your desktop.`);
   } catch (err) {
     petBusy = '';
     toast(String(err), 'neg');
@@ -1403,6 +1797,14 @@ pet.onAct(({ act, id }) => {
   }
   if (act === 'hold') {
     toggleHold();
+    return;
+  }
+  if (act === 'chat') {
+    openChat();
+    return;
+  }
+  if (act === 'snip') {
+    startSnip();
     return;
   }
   if (act === 'start') {
@@ -1432,7 +1834,10 @@ function sendPetState(t) {
     locked: !state.session && E.isLocked(state, t),
     lockoutMs: state.lockout && !state.session ? Math.max(0, state.lockout.until - t) : 0,
     profiles: state.profiles.map((p) => ({ id: p.id, name: p.name, label: profileLabel(p) })),
-    session: sv ? { kind: sv.phase.kind, pause: sv.pause, held: sv.held, remaining: Math.ceil(sv.remaining / 1000) * 1000 } : null,
+    ai: Boolean(aiKey),
+    snip: ai.canSnip,
+    // a stopwatch's badge shows the time so far
+    session: sv ? { kind: sv.phase.kind, pause: sv.pause, held: sv.held, remaining: sv.open ? Math.floor(sv.elapsed / 1000) * 1000 : Math.ceil(sv.remaining / 1000) * 1000 } : null,
   };
   const key = JSON.stringify(s);
   if (key === lastPetState) return;
